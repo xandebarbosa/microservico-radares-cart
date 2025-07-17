@@ -1,0 +1,29 @@
+networks:
+  radares-net:
+    external: true
+
+services:
+  # ===============================================================
+  # NOSSO MICROSSERVIÇO: Radar Cart
+  # ===============================================================
+  microservico-radar-cart:
+    container_name: microservico-radares-cart
+    # Em vez de 'image', usamos 'build' para construir a partir do nosso Dockerfile
+    build:
+      context: ../microservico-radares-cart # Caminho relativo para a pasta do projeto
+    ports:
+      - "8085:8085" # Expõe a porta do serviço para a sua máquina
+    environment:
+      # ATIVA O PERFIL DE PRODUÇÃO, fazendo o Spring usar o application-prod.properties
+      - SPRING_PROFILES_ACTIVE=prod
+      # Você pode sobrescrever outras configs aqui, como as senhas de FTP
+      - FTP_HOST=${CART_FTP_HOST}
+      - FTP_USER=${CART_FTP_USER}
+      - FTP_PASS=${CART_FTP_PASS}
+    networks:
+      - radares-net
+    restart: unless-stopped
+volumes:
+  postgres-cart-data:
+  pgadmin-data: # <-- Adicionar o novo volume aqui
+  es-data:
