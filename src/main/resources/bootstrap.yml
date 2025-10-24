@@ -1,15 +1,26 @@
 spring:
   application:
-    name: microsservico-radar-cart
+    # Corrigido: Padronizado para "microservico-radares-cart" (plural)
+    # Deve ser idêntico ao <artifactId> no pom.xml e ao spring.application.name
+    # no application.properties para consistência.
+    name: microservico-radares-cart
   profiles:
+    # Garante que o perfil de produção seja o ativo
     active: prod
   config:
+    # Define a origem das configurações externas (Config Server)
     import: "optional:configserver:http://config-server:8888"
   cloud:
     bootstrap:
+      # Necessário para que este arquivo bootstrap seja lido primeiro
       enabled: true
     config:
-      # Permite que a app inicie mesmo se o config server não responder imediatamente
+      # Em produção, você pode considerar mudar para 'true'.
+      # 'true' faz a aplicação falhar na inicialização se não encontrar o Config Server.
+      # 'false' (como está) permite que ela suba com configurações locais/em cache,
+      # o que pode ser arriscado se as configurações estiverem desatualizadas.
       fail-fast: false
+
+      # Mantido para evitar erros de importação na inicialização
       import-check:
         enabled: false

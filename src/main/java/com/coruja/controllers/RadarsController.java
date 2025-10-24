@@ -16,7 +16,7 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.List;
 
-@CrossOrigin(origins = "http://localhost:3009")
+@CrossOrigin(origins = "${cors.origins}")
 @RestController
 @RequestMapping(value = "/radares")
 public class RadarsController {
@@ -24,7 +24,6 @@ public class RadarsController {
     @Autowired
     private RadarsRepository radarsRepository;
 
-    @Autowired
     private final RadarsService radarsService;
 
     // Injeção de dependência via construtor é a melhor prática
