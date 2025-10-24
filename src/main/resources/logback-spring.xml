@@ -21,4 +21,7 @@
         <appender-ref ref="LOGSTASH" />
         <appender-ref ref="CONSOLE" />
     </root>
+
+    <logger name="org.hibernate.engine.jdbc.spi.SqlExceptionHelper" level="WARN" />
+
 </configuration>

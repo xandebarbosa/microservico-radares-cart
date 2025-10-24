@@ -1,0 +1,15 @@
+spring:
+  application:
+    name: microsservico-radar-cart
+  profiles:
+    active: prod
+  config:
+    import: "optional:configserver:http://config-server:8888"
+  cloud:
+    bootstrap:
+      enabled: true
+    config:
+      # Permite que a app inicie mesmo se o config server não responder imediatamente
+      fail-fast: false
+      import-check:
+        enabled: false

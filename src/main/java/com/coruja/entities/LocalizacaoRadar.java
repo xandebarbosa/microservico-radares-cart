@@ -15,7 +15,7 @@ public class LocalizacaoRadar {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private  Long id;
+    private Long id;
     private String concessionaria;
     private String rodovia;
     private String km;

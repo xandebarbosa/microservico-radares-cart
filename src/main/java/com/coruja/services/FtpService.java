@@ -38,6 +38,9 @@ public class FtpService {
     @Value("${ftp.host}")
     private String FTP_HOST;
 
+    @Value("${ftp.port}")
+    private int FTP_PORT;
+
     @Value("${ftp.user}")
     private String FTP_USER;
 
@@ -64,7 +67,7 @@ public class FtpService {
     // Regex para capturar os dados da linha. MUITO MAIS ROBUSTO!
     // Captura 6 grupos: 1=Data, 2=Hora, 3=Placa, 4=Praça/Sentido, 5=Rodovia, 6=KM
     private static final Pattern LINE_PATTERN = Pattern.compile(
-            "^(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(.+?)(?:\\s+(\\S+)\\s+(\\S+))?$"
+            "^(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(.+?)\\s+(SP\\S+)\\s+(KM\\S+)$"
     );
 
     public FtpService(RadarsService radarsService, LocalizacaoRadarRepository localizacaoRepository) {
@@ -230,8 +233,8 @@ public class FtpService {
 
             // CORREÇÃO PARA CAMPOS OPCIONAIS: Verificamos se os grupos foram capturados.
             String pracaESentido = matcher.group(4).trim();
-            String rodovia = matcher.group(5) != null ? matcher.group(5) : " "; // Valor padrão se não encontrado
-            String km = matcher.group(6) != null ? matcher.group(6).replace("KM", "") : " "; // Valor padrão se não encontrado
+            String rodovia = matcher.group(5); // Não é mais opcional na regex
+            String km = matcher.group(6).replace("KM", "").trim();
 
             String[] partesPraca = pracaESentido.split("\\s+");
             String sentido = "N/I"; // Valor padrão
@@ -246,9 +249,19 @@ public class FtpService {
             LocalTime hora = LocalTime.parse(horaStr, DateTimeFormatter.ofPattern("HH:mm:ss[.SSS]"));
 
             // 1. Busca na tabela "De-Para" pelo objeto de localização completo.
-            LocalizacaoRadar localizacaoDoRadar = localizacaoRepository.findByPraca(praca)
-                    .orElse(null); // Se não encontrar, o campo fica nulo
+            LocalizacaoRadar localizacaoDoRadar = null; // 1. Começa como nulo
+            try {
+                // 2. Tenta buscar na tabela "De-Para"
+                localizacaoDoRadar = localizacaoRepository.findByPraca(praca)
+                        .orElse(null); // Se encontrar, atribui
 
+            } catch (Exception e) {
+                // 3. Se falhar (ex: Tabela não existe), avisa e continua
+                logger.warn("Não foi possível consultar a tabela 'localizacao_radar' (ela pode não existir). O campo de localização ficará nulo. Causa: {}", e.getMessage());
+            }
+            // ***************************************************************
+
+            // 4. Cria o objeto Radars com o que foi possível obter
             return new Radars(data, hora, placa, praca, rodovia, km, sentido, localizacaoDoRadar);
 
         } catch (Exception e) {
@@ -259,8 +272,9 @@ public class FtpService {
 
     // Métodos de conexão e download foram levemente ajustados para clareza
     private void conectarFTP(FTPClient ftpClient) throws IOException {
-        logger.info("Conectando ao FTP: {}", FTP_HOST);
-        ftpClient.connect(FTP_HOST);
+        //logger.info("Conectando ao FTP: {}", FTP_HOST);
+        logger.info("Tentando conectar ao FTP com HOST: [{}] e PORTA: [{}]", FTP_HOST, FTP_PORT);
+        ftpClient.connect(FTP_HOST, FTP_PORT);
         if (!FTPReply.isPositiveCompletion(ftpClient.getReplyCode())) {
             throw new IOException("Falha ao conectar ao FTP: " + ftpClient.getReplyString());
         }

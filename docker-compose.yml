@@ -14,10 +14,15 @@ services:
     ports:
       - "8085:8085" # Expõe a porta do serviço para a sua máquina
     environment:
-      # ATIVA O PERFIL DE PRODUÇÃO, fazendo o Spring usar o application-prod.properties
       - SPRING_PROFILES_ACTIVE=prod
-      # Você pode sobrescrever outras configs aqui, como as senhas de FTP
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - RABBITMQ_USER=${RABBITMQ_USER}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
+      - rabbitmq.exchange.name=radares_exchange
+      - rabbitmq.routing.key=radares.cart
       - FTP_HOST=${CART_FTP_HOST}
+      - FTP_PORT=${CART_FTP_PORT}
       - FTP_USER=${CART_FTP_USER}
       - FTP_PASS=${CART_FTP_PASS}
     networks:
