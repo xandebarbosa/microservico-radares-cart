@@ -26,16 +26,16 @@ public interface RadarsRepository extends JpaRepository<Radars, Long>, JpaSpecif
     // SELECT * FROM radars WHERE rodovia = ? AND km = ? AND sentido = ?
     Page<Radars> findByRodoviaAndKmAndSentido(String rodovia, String km, String sentido, Pageable pageable);
 
-    @Query("SELECT DISTINCT r.rodovia FROM Radars r WHERE r.rodovia IS NOT NULL AND r.rodovia != '' ORDER BY r.rodovia")
+    @Query("SELECT DISTINCT r.rodovia FROM Radars r WHERE r.rodovia IS NOT NULL ORDER BY r.rodovia")
     List<String> findDistinctHighways();
 
-    @Query("SELECT DISTINCT r.praca FROM Radars r WHERE r.praca IS NOT NULL AND r.praca != '' ORDER BY r.praca")
+    @Query("SELECT DISTINCT r.praca FROM Radars r WHERE r.praca IS NOT NULL ORDER BY r.praca")
     List<String> findDistinctPlaza();
 
-    @Query("SELECT DISTINCT r.km FROM Radars r WHERE r.km IS NOT NULL AND r.km != '' ORDER BY r.km")
+    @Query("SELECT DISTINCT r.km FROM Radars r WHERE r.km IS NOT NULL ORDER BY r.km")
     List<String> findDistinctKms();
 
-    @Query("SELECT DISTINCT r.sentido FROM Radars r WHERE r.sentido IS NOT NULL AND r.sentido != '' ORDER BY r.sentido")
+    @Query("SELECT DISTINCT r.sentido FROM Radars r WHERE r.sentido IS NOT NULL ORDER BY r.sentido")
     List<String> findDisntictSenses();
 
     @Query("SELECT DISTINCT r.km FROM Radars r WHERE r.rodovia = :rodovia AND r.km IS NOT NULL AND r.km <> '' ORDER BY r.km")

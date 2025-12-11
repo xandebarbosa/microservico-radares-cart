@@ -1,0 +1,37 @@
+package com.coruja.config;
+
+import org.springframework.boot.autoconfigure.cache.RedisCacheManagerBuilderCustomizer;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.data.redis.cache.RedisCacheConfiguration;
+import org.springframework.data.redis.serializer.GenericJackson2JsonRedisSerializer;
+import org.springframework.data.redis.serializer.RedisSerializationContext;
+
+import java.time.Duration;
+
+@Configuration
+public class RedisConfig {
+    /**
+     * Configura o serializador para JSON.
+     * Assim você consegue abrir o Redis Desktop Manager e ler os dados.
+     */
+    @Bean
+    public RedisCacheConfiguration cacheConfiguration() {
+        return RedisCacheConfiguration.defaultCacheConfig()
+                .entryTtl(Duration.ofMinutes(30)) // Cache dura 30 minutos por padrão
+                .disableCachingNullValues()
+                .serializeValuesWith(RedisSerializationContext.SerializationPair.fromSerializer(new GenericJackson2JsonRedisSerializer()));
+    }
+
+    /**
+     * Permite configurar TTLs diferentes para caches específicos.
+     */
+    @Bean
+    public RedisCacheManagerBuilderCustomizer redisCacheManagerBuilderCustomizer() {
+        return (builder) -> builder
+                .withCacheConfiguration("opcoes-filtro",
+                        RedisCacheConfiguration.defaultCacheConfig().entryTtl(Duration.ofHours(1))) // Filtros duram 1 hora
+                .withCacheConfiguration("outra-cache-rapida",
+                        RedisCacheConfiguration.defaultCacheConfig().entryTtl(Duration.ofSeconds(30)));
+    }
+}

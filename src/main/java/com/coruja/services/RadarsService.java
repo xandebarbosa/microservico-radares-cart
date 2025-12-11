@@ -4,13 +4,17 @@ import com.coruja.dto.FilterOptionsDTO;
 import com.coruja.dto.RadarsDTO;
 import com.coruja.entities.Radars;
 import com.coruja.repositories.RadarsRepository;
+import com.coruja.specifications.RadarsSpecification;
 import jakarta.persistence.criteria.Expression;
 import jakarta.persistence.criteria.Predicate;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.AmqpException;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
@@ -22,12 +26,18 @@ import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 @Service
+@Slf4j
 public class RadarsService {
 
-    private static final Logger logger = LoggerFactory.getLogger(RadarsService.class);
+
 
     @Value("${rabbitmq.exchange.name}")
     private String exchangeName;
@@ -37,6 +47,9 @@ public class RadarsService {
 
     private final RadarsRepository radarsRepository;
     private final RabbitTemplate rabbitTemplate;
+
+    // Thread Pool dedicada para evitar bloquear o servidor principal
+    private final ExecutorService executorService = Executors.newFixedThreadPool(5);
 
     public  RadarsService(RadarsRepository radarsRepository, RabbitTemplate rabbitTemplate) {
         this.radarsRepository = radarsRepository;
@@ -58,83 +71,96 @@ public class RadarsService {
      * @return Uma página de RadarsDTO que corresponde aos filtros.
      */
 
-    public Page<RadarsDTO> buscarComFiltros(
-            String placa, String praca, String rodovia, String km, String sentido,
-            LocalDate data, LocalTime horaInicial, LocalTime horaFinal,
-            Pageable pageable
-    ) {
-        try {
-            if (placa != null) placa = URLDecoder.decode(placa, StandardCharsets.UTF_8);
-            if (praca != null) praca = URLDecoder.decode(praca, StandardCharsets.UTF_8);
-            if (rodovia != null) rodovia = URLDecoder.decode(rodovia, StandardCharsets.UTF_8);
-            if (km != null) km = URLDecoder.decode(km, StandardCharsets.UTF_8);
-            if (sentido != null) sentido = URLDecoder.decode(sentido, StandardCharsets.UTF_8);
-        } catch (Exception e) {
-            logger.error("Erro ao decodificar parâmetros da URL.", e);
-        }
+//    public Page<RadarsDTO> buscarComFiltros(
+//            String placa, String praca, String rodovia, String km, String sentido,
+//            LocalDate data, LocalTime horaInicial, LocalTime horaFinal,
+//            Pageable pageable
+//    ) {
+//        try {
+//            if (placa != null) placa = URLDecoder.decode(placa, StandardCharsets.UTF_8);
+//            if (praca != null) praca = URLDecoder.decode(praca, StandardCharsets.UTF_8);
+//            if (rodovia != null) rodovia = URLDecoder.decode(rodovia, StandardCharsets.UTF_8);
+//            if (km != null) km = URLDecoder.decode(km, StandardCharsets.UTF_8);
+//            if (sentido != null) sentido = URLDecoder.decode(sentido, StandardCharsets.UTF_8);
+//        } catch (Exception e) {
+//            log.error("Erro ao decodificar parâmetros da URL.", e);
+//        }
+//
+//        String finalPlaca = placa;
+//        String finalPraca = praca;
+//        String finalRodovia = rodovia;
+//        String finalSentido = sentido;
+//        String finalKm = km;
+//        Specification<Radars> spec = (root, query, criteriaBuilder) -> {
+//            List<Predicate> predicates = new ArrayList<>();
+//
+//            // Lógica de filtragem robusta que ignora maiúsculas/minúsculas e espaços
+//            if (finalPlaca != null && !finalPlaca.isBlank()) {
+//                predicates.add(criteriaBuilder.equal(
+//                        criteriaBuilder.lower(root.get("placa")),
+//                        finalPlaca.toLowerCase().trim()
+//                ));
+//            }
+//            if (finalPraca != null && !finalPraca.isBlank()) {
+//                predicates.add(criteriaBuilder.equal(
+//                        criteriaBuilder.lower(root.get("praca")),
+//                        finalPraca.toLowerCase().trim()
+//                ));
+//            }
+//            if (finalRodovia != null && !finalRodovia.isBlank()) {
+//                predicates.add(criteriaBuilder.equal(
+//                        criteriaBuilder.lower(root.get("rodovia")),
+//                        finalRodovia.toLowerCase().trim()
+//                ));
+//            }
+//            if (finalSentido != null && !finalSentido.isBlank()) {
+//                predicates.add(criteriaBuilder.equal(
+//                        criteriaBuilder.lower(root.get("sentido")),
+//                        finalSentido.toLowerCase().trim()
+//                ));
+//            }
+//
+//            // Lógica de comparação especial para o KM, que ignora espaços e o sinal de '+'
+//            if (finalKm != null && !finalKm.isBlank()) {
+//                String kmLimpo = finalKm.replaceAll("[\\s+]", "");
+//                Expression<String> kmDoBanco = root.get("km");
+//                Expression<String> kmSemEspacos = criteriaBuilder.function("REPLACE", String.class, kmDoBanco, criteriaBuilder.literal(" "), criteriaBuilder.literal(""));
+//                Expression<String> kmSemEspacosOuSinal = criteriaBuilder.function("REPLACE", String.class, kmSemEspacos, criteriaBuilder.literal("+"), criteriaBuilder.literal(""));
+//
+//                predicates.add(criteriaBuilder.equal(
+//                        criteriaBuilder.lower(kmSemEspacosOuSinal),
+//                        kmLimpo.toLowerCase()
+//                ));
+//            }
+//
+//            // Filtros de data e hora
+//            if (data != null) {
+//                predicates.add(criteriaBuilder.equal(root.get("data"), data));
+//            }
+//            if (horaInicial != null) {
+//                predicates.add(criteriaBuilder.greaterThanOrEqualTo(root.get("hora"), horaInicial));
+//            }
+//            if (horaFinal != null) {
+//                predicates.add(criteriaBuilder.lessThanOrEqualTo(root.get("hora"), horaFinal));
+//            }
+//
+//            return criteriaBuilder.and(predicates.toArray(new Predicate[0]));
+//        };
+//
+//        return radarsRepository.findAll(spec, pageable).map(this::converterParaDTO);
+//    }
 
-        String finalPlaca = placa;
-        String finalPraca = praca;
-        String finalRodovia = rodovia;
-        String finalSentido = sentido;
-        String finalKm = km;
-        Specification<Radars> spec = (root, query, criteriaBuilder) -> {
-            List<Predicate> predicates = new ArrayList<>();
+    public Page<RadarsDTO> buscarComFiltros(String placa, String praca, String rodovia, String km, String sentido, LocalDate data, LocalTime horaInicial, LocalTime horaFinal, Pageable pageable) {
+        Specification<Radars> spec = Specification.where(RadarsSpecification.comPlaca(placa))
+                .and(RadarsSpecification.comPraca(praca))
+                .and(RadarsSpecification.comRodovia(rodovia))
+                .and(RadarsSpecification.comKm(km))
+                .and(RadarsSpecification.comSentido(sentido))
+                .and(RadarsSpecification.comData(data))
+                .and(RadarsSpecification.comHoraEntre(horaInicial, horaFinal));
 
-            // Lógica de filtragem robusta que ignora maiúsculas/minúsculas e espaços
-            if (finalPlaca != null && !finalPlaca.isBlank()) {
-                predicates.add(criteriaBuilder.equal(
-                        criteriaBuilder.lower(root.get("placa")),
-                        finalPlaca.toLowerCase().trim()
-                ));
-            }
-            if (finalPraca != null && !finalPraca.isBlank()) {
-                predicates.add(criteriaBuilder.equal(
-                        criteriaBuilder.lower(root.get("praca")),
-                        finalPraca.toLowerCase().trim()
-                ));
-            }
-            if (finalRodovia != null && !finalRodovia.isBlank()) {
-                predicates.add(criteriaBuilder.equal(
-                        criteriaBuilder.lower(root.get("rodovia")),
-                        finalRodovia.toLowerCase().trim()
-                ));
-            }
-            if (finalSentido != null && !finalSentido.isBlank()) {
-                predicates.add(criteriaBuilder.equal(
-                        criteriaBuilder.lower(root.get("sentido")),
-                        finalSentido.toLowerCase().trim()
-                ));
-            }
-
-            // Lógica de comparação especial para o KM, que ignora espaços e o sinal de '+'
-            if (finalKm != null && !finalKm.isBlank()) {
-                String kmLimpo = finalKm.replaceAll("[\\s+]", "");
-                Expression<String> kmDoBanco = root.get("km");
-                Expression<String> kmSemEspacos = criteriaBuilder.function("REPLACE", String.class, kmDoBanco, criteriaBuilder.literal(" "), criteriaBuilder.literal(""));
-                Expression<String> kmSemEspacosOuSinal = criteriaBuilder.function("REPLACE", String.class, kmSemEspacos, criteriaBuilder.literal("+"), criteriaBuilder.literal(""));
-
-                predicates.add(criteriaBuilder.equal(
-                        criteriaBuilder.lower(kmSemEspacosOuSinal),
-                        kmLimpo.toLowerCase()
-                ));
-            }
-
-            // Filtros de data e hora
-            if (data != null) {
-                predicates.add(criteriaBuilder.equal(root.get("data"), data));
-            }
-            if (horaInicial != null) {
-                predicates.add(criteriaBuilder.greaterThanOrEqualTo(root.get("hora"), horaInicial));
-            }
-            if (horaFinal != null) {
-                predicates.add(criteriaBuilder.lessThanOrEqualTo(root.get("hora"), horaFinal));
-            }
-
-            return criteriaBuilder.and(predicates.toArray(new Predicate[0]));
-        };
-
-        return radarsRepository.findAll(spec, pageable).map(this::converterParaDTO);
+        Page<Radars> radarsPage = radarsRepository.findAll(spec, pageable);
+        return radarsPage.map(this::converterParaDTO);
     }
 
     /**
@@ -172,7 +198,7 @@ public class RadarsService {
         //    A lista 'savedRadars' agora contém as entidades com os IDs preenchidos.
         List<Radars> savedRadars = radarsRepository.saveAll(radarsList);
 
-        logger.info("{} registros salvos no banco de dados com sucesso.", savedRadars.size());
+        log.info("{} registros salvos no banco de dados com sucesso.", savedRadars.size());
 
         // 2. Itera sobre a lista de entidades JÁ SALVAS para enviar ao RabbitMQ.
         savedRadars.forEach(this::enviarMensagemParaRabbitMQ);
@@ -184,7 +210,7 @@ public class RadarsService {
      */
     private void enviarMensagemParaRabbitMQ(Radars radar) {
         if (!isValidRadar(radar)) { // Lógica de validação em um método auxiliar
-            logger.warn("Dados incompletos para a placa: {}. Mensagem não será enviada.", radar.getPlaca());
+            log.warn("Dados incompletos para a placa: {}. Mensagem não será enviada.", radar.getPlaca());
             return;
         }
 
@@ -192,10 +218,10 @@ public class RadarsService {
 
         try {
             rabbitTemplate.convertAndSend(exchangeName, routingKey, mensagem);
-            logger.info("Mensagem enviada para RabbitMQ com routingKey [{}]: {}", routingKey, mensagem);
+            log.info("Mensagem enviada para RabbitMQ com routingKey [{}]: {}", routingKey, mensagem);
         } catch (AmqpException e) {
             // Tratamento de erro resiliente
-            logger.warn("Falha ao enviar mensagem para RabbitMQ - Placa: {}. Causa: {}", radar.getPlaca(), e.getMessage());
+            log.warn("Falha ao enviar mensagem para RabbitMQ - Placa: {}. Causa: {}", radar.getPlaca(), e.getMessage());
         }
     }
 
@@ -211,13 +237,41 @@ public class RadarsService {
                 radar.getPraca(), radar.getRodovia(), radar.getKm(), radar.getSentido());
     }
 
+    /**
+     * Refatorado para Performance:
+     * 1. Usa @Cacheable para evitar ir ao banco toda vez.
+     * 2. Usa CompletableFuture para rodar as 4 queries AO MESMO TEMPO.
+     */
+    @Cacheable( value = "opcoes-filtro-cart", unless = "#result == null")
     public FilterOptionsDTO getFilterOptions() {
-        List<String> rodovias = radarsRepository.findDistinctHighways();
-        //List<String> pracas = radarsRepository.findDistinctPlaza();
-        List<String> kms = radarsRepository.findDistinctKms();
-        List<String> sentidos = radarsRepository.findDisntictSenses();
+        log.info("🚀 Iniciando busca de filtros em PARALELO no banco de dados...");
+        long start = System.currentTimeMillis();
 
-        return new FilterOptionsDTO(rodovias, kms, sentidos);
+        try {
+            var rodoviasFuture = CompletableFuture.supplyAsync(radarsRepository::findDistinctHighways, executorService);
+            var pracasFuture = CompletableFuture.supplyAsync(radarsRepository::findDistinctPlaza, executorService);
+            var kmsFuture = CompletableFuture.supplyAsync(radarsRepository::findDistinctKms, executorService);
+            var sentidosFuture = CompletableFuture.supplyAsync(radarsRepository::findDisntictSenses, executorService);
+
+            // Aguarda todas terminarem
+            CompletableFuture.allOf(rodoviasFuture, pracasFuture, kmsFuture, sentidosFuture).join();
+
+            FilterOptionsDTO dto = new FilterOptionsDTO(
+                    rodoviasFuture.get(),
+                    pracasFuture.get(),
+                    kmsFuture.get(),
+                    sentidosFuture.get()
+            );
+
+            log.info("✅ Filtros carregados em {}ms", (System.currentTimeMillis() - start));
+            return dto;
+
+        } catch (Exception e) {
+            log.error("❌ Erro ao buscar filtros: {}", e.getMessage());
+            // Retorna vazio em caso de erro, mas loga o problema real
+            return new FilterOptionsDTO(List.of(), List.of(), List.of(), List.of());
+        }
+
     }
 
     public List<String> getKmsForRodovia(String rodovia) {
