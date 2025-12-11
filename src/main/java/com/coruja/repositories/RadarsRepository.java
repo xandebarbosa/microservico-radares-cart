@@ -27,17 +27,17 @@ public interface RadarsRepository extends JpaRepository<Radars, Long>, JpaSpecif
     Page<Radars> findByRodoviaAndKmAndSentido(String rodovia, String km, String sentido, Pageable pageable);
 
     @Query("SELECT DISTINCT r.rodovia FROM Radars r WHERE r.rodovia IS NOT NULL ORDER BY r.rodovia")
-    List<String> findDistinctHighways();
+    List<String> findDistinctRodovias();
 
     @Query("SELECT DISTINCT r.praca FROM Radars r WHERE r.praca IS NOT NULL ORDER BY r.praca")
-    List<String> findDistinctPlaza();
+    List<String> findDistinctPracas();
 
     @Query("SELECT DISTINCT r.km FROM Radars r WHERE r.km IS NOT NULL ORDER BY r.km")
     List<String> findDistinctKms();
 
     @Query("SELECT DISTINCT r.sentido FROM Radars r WHERE r.sentido IS NOT NULL ORDER BY r.sentido")
-    List<String> findDisntictSenses();
+    List<String> findDistinctSentidos();
 
-    @Query("SELECT DISTINCT r.km FROM Radars r WHERE r.rodovia = :rodovia AND r.km IS NOT NULL AND r.km <> '' ORDER BY r.km")
+    @Query("SELECT DISTINCT r.km FROM Radars r WHERE r.rodovia = :rodovia ORDER BY r.km")
     List<String> findDistinctKmsByRodovia(@Param("rodovia") String rodovia);
 }

@@ -248,10 +248,10 @@ public class RadarsService {
         long start = System.currentTimeMillis();
 
         try {
-            var rodoviasFuture = CompletableFuture.supplyAsync(radarsRepository::findDistinctHighways, executorService);
-            var pracasFuture = CompletableFuture.supplyAsync(radarsRepository::findDistinctPlaza, executorService);
+            var rodoviasFuture = CompletableFuture.supplyAsync(radarsRepository::findDistinctRodovias, executorService);
+            var pracasFuture = CompletableFuture.supplyAsync(radarsRepository::findDistinctPracas, executorService);
             var kmsFuture = CompletableFuture.supplyAsync(radarsRepository::findDistinctKms, executorService);
-            var sentidosFuture = CompletableFuture.supplyAsync(radarsRepository::findDisntictSenses, executorService);
+            var sentidosFuture = CompletableFuture.supplyAsync(radarsRepository::findDistinctSentidos, executorService);
 
             // Aguarda todas terminarem
             CompletableFuture.allOf(rodoviasFuture, pracasFuture, kmsFuture, sentidosFuture).join();
