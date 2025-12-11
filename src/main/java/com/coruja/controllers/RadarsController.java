@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -21,13 +22,11 @@ import java.util.List;
 @RequestMapping(value = "/radares")
 public class RadarsController {
 
-    @Autowired
-    private RadarsRepository radarsRepository;
-
     private final RadarsService radarsService;
 
     // Injeção de dependência via construtor é a melhor prática
     public RadarsController(RadarsService radarsService) {
+
         this.radarsService = radarsService;
     }
 
@@ -48,12 +47,11 @@ public class RadarsController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate data,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.TIME) LocalTime horaInicial,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.TIME) LocalTime horaFinal,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size
+            // @PageableDefault define o padrão caso o BFF não envie nada (ex: page 0, size 20)
+            @PageableDefault(page = 0, size = 20) Pageable pageable
     ) {
-        PageRequest pageRequest = PageRequest.of(page, size);
         Page<RadarsDTO> resultado = radarsService.buscarComFiltros(
-                placa, praca,rodovia, km, sentido, data, horaInicial, horaFinal, pageRequest
+                placa, praca,rodovia, km, sentido, data, horaInicial, horaFinal, pageable
         );
         return  ResponseEntity.ok(resultado);
     }
