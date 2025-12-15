@@ -29,9 +29,9 @@ public class RedisConfig {
     @Bean
     public RedisCacheManagerBuilderCustomizer redisCacheManagerBuilderCustomizer() {
         return (builder) -> builder
-                .withCacheConfiguration("opcoes-filtro-cart",
-                        RedisCacheConfiguration.defaultCacheConfig().entryTtl(Duration.ofHours(1))) // Filtros duram 1 hora
-                .withCacheConfiguration("outra-cache-rapida",
+                .withCacheConfiguration("opcoes-filtro-cart-v2",
+                        RedisCacheConfiguration.defaultCacheConfig().entryTtl(Duration.ofHours(30))) // Filtros duram 30 minutos
+                .withCacheConfiguration("kms-rodovia-cart-v2",
                         RedisCacheConfiguration.defaultCacheConfig().entryTtl(Duration.ofSeconds(30)));
     }
 }
