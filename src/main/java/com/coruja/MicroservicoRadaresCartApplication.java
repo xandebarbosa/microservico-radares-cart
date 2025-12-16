@@ -8,7 +8,7 @@ import org.springframework.data.web.config.EnableSpringDataWebSupport;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 @SpringBootApplication
-@EnableScheduling
+//@EnableScheduling
 @EnableCaching
 @EntityScan(basePackages = {"com.coruja.entities"})
 public class MicroservicoRadaresCartApplication {
