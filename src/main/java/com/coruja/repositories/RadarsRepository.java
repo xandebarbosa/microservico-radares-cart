@@ -9,6 +9,8 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.List;
 
 @Repository
@@ -40,4 +42,45 @@ public interface RadarsRepository extends JpaRepository<Radars, Long>, JpaSpecif
 
     @Query("SELECT DISTINCT r.km FROM Radars r WHERE r.rodovia = :rodovia ORDER BY r.km")
     List<String> findDistinctKmsByRodovia(@Param("rodovia") String rodovia);
+
+    /**
+     * Busca radares dentro de um raio (em metros) de uma coordenada, filtrando por data e hora.
+     * Usa PostGIS para alta performance.
+     */
+    @Query(value = """
+        SELECT r.* FROM radars_cart r
+        INNER JOIN localizacao_radar l ON r.localizacao_id = l.id
+        WHERE r.data = :data
+          AND r.hora >= :horaInicio
+          AND r.hora <= :horaFim
+          AND ST_DWithin(
+              l.localizacao,
+              ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326)::geography,
+              :raio
+          )
+        """,
+            countQuery = """
+        SELECT count(*)
+        FROM radars_cart r
+        INNER JOIN localizacao_radar l ON r.localizacao_id = l.id
+        WHERE r.data = :data
+          AND r.hora >= :horaInicio
+          AND r.hora <= :horaFim
+          AND ST_DWithin(
+              l.localizacao,
+              ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326)::geography,
+              :raio
+          )
+        """,
+            nativeQuery = true)
+    Page<Radars> findByLocalizacaoProxima(
+            @Param("latitude") Double latitude,
+            @Param("longitude") Double longitude,
+            @Param("raio") Double raioEmMetros,
+            @Param("data") LocalDate data,
+            @Param("horaInicio") LocalTime horaInicio,
+            @Param("horaFim") LocalTime horafim,
+            Pageable pageable
+    );
+    
 }

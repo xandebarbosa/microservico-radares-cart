@@ -29,7 +29,7 @@ public class LocalizacaoScheduler {
      * Atualiza a coluna localizacao_id na tabela radars_cart
      * cruzando dados com a tabela localizacao_radar.
      */
-    @Scheduled(fixedRate = 10000)
+    @Scheduled(fixedRate = 300000)
     @Transactional
     public void vincularLocalizacoes() {
         logger.info("Iniciando job de vinculação de localizações (UPDATE SQL)...");

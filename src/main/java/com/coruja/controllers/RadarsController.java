@@ -14,6 +14,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
 
@@ -74,5 +75,26 @@ public class RadarsController {
     public ResponseEntity<List<String>> getKmsByRodovia(@RequestParam String rodovia) {
         return ResponseEntity.ok(radarsService.getKmsForRodovia(rodovia));
     }
+
+    /**
+     * Endpoint para busca Geoespacial (Latitude/Longitude).
+     * Exemplo de chamada:
+     * GET /radares/geo-search?lat=-22.89&lon=-48.45&data=2025-12-15&horaInicial=08:00&horaFinal=10:00&raio=500
+     */
+    public ResponseEntity<Page<RadarsDTO>> buscarPorLocalizacao(
+            @RequestParam Double lat,
+            @RequestParam Double lon,
+            @RequestParam(required = false, defaultValue = "1000") Double raio, // Default 1km
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate data,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.TIME) LocalTime horaInicio,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.TIME) LocalTime horaFim,
+            @PageableDefault(page = 0, size = 20) Pageable pageable
+            ) {
+        Page<RadarsDTO> resultado = radarsService.buscarPorGeolocalizacao(
+                lat, lon, raio, data, horaInicio, horaFim, pageable
+        );
+        return ResponseEntity.ok(resultado);
+    }
+
 
 }
