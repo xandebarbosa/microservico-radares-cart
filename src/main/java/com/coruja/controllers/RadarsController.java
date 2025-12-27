@@ -81,6 +81,7 @@ public class RadarsController {
      * Exemplo de chamada:
      * GET /radares/geo-search?lat=-22.89&lon=-48.45&data=2025-12-15&horaInicial=08:00&horaFinal=10:00&raio=500
      */
+    @GetMapping("/geo-search")
     public ResponseEntity<Page<RadarsDTO>> buscarPorLocalizacao(
             @RequestParam Double lat,
             @RequestParam Double lon,
