@@ -209,29 +209,33 @@ public class RadarsService {
 
     /**
      * Busca veículos que passaram próximos a uma coordenada geográfica.
-     * * @param lat Latitude (ex: -22.1234)
-     * @param lon Longitude (ex: -49.5678)
+     * @param latitude Latitude (ex: -22.1234)
+     * @param longitude Longitude (ex: -49.5678)
      * @param raio Raio em metros (opcional, default = 1000m)
      * @param data Data da passagem (Obrigatório)
-     * @param inicio Hora inicial (Obrigatório)
-     * @param fim Hora final (Obrigatório)
+     * @param horaInicio Hora inicial (Obrigatório)
+     * @param horaFim Hora final (Obrigatório)
      */
     @Transactional(readOnly = true)
     public Page<RadarsDTO> buscarPorGeolocalizacao(
-            Double lat, Double lon, Double raio,
-            LocalDate data, LocalTime inicio, LocalTime fim,
+            Double latitude, Double longitude, Double raio,
+            LocalDate data, LocalTime horaInicio, LocalTime horaFim,
             Pageable pageable
     ) {
         //Validação básica
-        if (lat == null || lon == null || data == null || inicio == null || fim == null) {
+        if (latitude == null || longitude == null || data == null || horaInicio == null || horaFim == null) {
             throw new IllegalArgumentException("Latitude, Longitude, Data, Hora Inicial e Hora Final são obrigatórios para a busca geoespacial.");
         }
 
-        // Se o raio não for informado, assume 1km (1000 metros)
-        double raioMetros = (raio != null) ? raio : 1000.0;
+        // Se o raio não for informado, assume 10km (10000 metros)
+        double raioMetros = (raio != null) ? raio : 15000.0;
 
-        return radarsRepository.findByLocalizacaoProxima(lat, lon, raioMetros, data, inicio, fim, pageable)
-                .map(this::converterParaDTO);
+        // Chama o repositório com a nova query nativa
+        Page<Radars> radarsPage = radarsRepository.findByGeolocalizacao(
+                latitude, longitude, raioMetros, data, horaInicio, horaFim, pageable
+        );
+        // Converte a Entidade para DTO
+        return radarsPage.map(this::converterParaDTO);
     }
 
     /**

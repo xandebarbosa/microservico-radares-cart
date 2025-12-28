@@ -46,37 +46,38 @@ public interface RadarsRepository extends JpaRepository<Radars, Long>, JpaSpecif
     /**
      * Busca radares dentro de um raio (em metros) de uma coordenada, filtrando por data e hora.
      * Usa PostGIS para alta performance.
+     * * Usa DISTINCT ON para remover duplicatas de Placa/Data/Hora.
      */
     @Query(value = """
-        SELECT r.* FROM radars_cart r
-        INNER JOIN localizacao_radar l ON r.localizacao_id = l.id
+        SELECT DISTINCT ON (r.data, r.hora, r.placa) r.* FROM radars_cart r
+        JOIN localizacao_radar l ON r.localizacao_id = l.id
         WHERE r.data = :data
-          AND r.hora >= :horaInicio
-          AND r.hora <= :horaFim
-          AND ST_DWithin(
-              l.localizacao,
-              ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326)::geography,
-              :raio
-          )
+        AND r.hora BETWEEN :horaInicio AND :horaFim
+        AND ST_DWithin(
+            l.localizacao::geography,
+            ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326)::geography,
+            :raio
+        )
+        ORDER BY r.data, r.hora, r.placa
         """,
+
             countQuery = """
-        SELECT count(*)
+        SELECT count(DISTINCT (r.data, r.hora, r.placa))
         FROM radars_cart r
-        INNER JOIN localizacao_radar l ON r.localizacao_id = l.id
+        JOIN localizacao_radar l ON r.localizacao_id = l.id
         WHERE r.data = :data
-          AND r.hora >= :horaInicio
-          AND r.hora <= :horaFim
-          AND ST_DWithin(
-              l.localizacao,
-              ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326)::geography,
-              :raio
-          )
+        AND r.hora BETWEEN :horaInicio AND :horaFim
+        AND ST_DWithin(
+            l.localizacao::geography,
+            ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326)::geography,
+            :raio
+        )
         """,
             nativeQuery = true)
-    Page<Radars> findByLocalizacaoProxima(
+    Page<Radars> findByGeolocalizacao(
             @Param("latitude") Double latitude,
             @Param("longitude") Double longitude,
-            @Param("raio") Double raioEmMetros,
+            @Param("raio") Double raio,
             @Param("data") LocalDate data,
             @Param("horaInicio") LocalTime horaInicio,
             @Param("horaFim") LocalTime horafim,

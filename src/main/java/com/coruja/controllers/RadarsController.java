@@ -83,16 +83,22 @@ public class RadarsController {
      */
     @GetMapping("/geo-search")
     public ResponseEntity<Page<RadarsDTO>> buscarPorLocalizacao(
-            @RequestParam Double lat,
-            @RequestParam Double lon,
-            @RequestParam(required = false, defaultValue = "1000") Double raio, // Default 1km
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate data,
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.TIME) LocalTime horaInicio,
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.TIME) LocalTime horaFim,
+            @RequestParam("latitude") Double latitude,
+            @RequestParam("longitude") Double longitude,
+            @RequestParam(value = "raio", required = false, defaultValue = "15000") Double raio,
+
+            @RequestParam("data")
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate data,
+
+            @RequestParam("horaInicio")
+            @DateTimeFormat(iso = DateTimeFormat.ISO.TIME) LocalTime horaInicio,
+
+            @RequestParam("horaFim")
+            @DateTimeFormat(iso = DateTimeFormat.ISO.TIME) LocalTime horaFim,
             @PageableDefault(page = 0, size = 20) Pageable pageable
             ) {
         Page<RadarsDTO> resultado = radarsService.buscarPorGeolocalizacao(
-                lat, lon, raio, data, horaInicio, horaFim, pageable
+                latitude, longitude, raio, data, horaInicio, horaFim, pageable
         );
         return ResponseEntity.ok(resultado);
     }
