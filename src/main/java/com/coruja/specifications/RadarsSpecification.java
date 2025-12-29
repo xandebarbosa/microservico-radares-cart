@@ -1,4 +1,5 @@
 package com.coruja.specifications;
+
 import com.coruja.entities.Radars;
 import org.springframework.data.jpa.domain.Specification;
 
@@ -7,10 +8,14 @@ import java.time.LocalTime;
 
 public class RadarsSpecification {
 
+    /**
+     * Filtra pela placa exata.
+     * PERFORMANCE: O uso de 'equal' permite que o Postgres use o índice 'idx_radares_placa'.
+     * Funções como 'like' ou 'lower' aqui tornariam a busca muito mais lenta em grandes volumes.
+     */
     public static Specification<Radars> comPlaca(String placa) {
         return (root, query, cb) -> {
             if (placa == null || placa.isBlank()) return null;
-            // Usa equal para performance (aproveita índice)
             return cb.equal(root.get("placa"), placa);
         };
     }
@@ -22,6 +27,10 @@ public class RadarsSpecification {
         };
     }
 
+    /**
+     * Filtra pela Rodovia.
+     * PERFORMANCE: Fundamental para ativar o índice composto (rodovia, km, sentido, data).
+     */
     public static Specification<Radars> comRodovia(String rodovia) {
         return (root, query, cb) -> {
             if (rodovia == null || rodovia.isBlank()) return null;
@@ -53,6 +62,7 @@ public class RadarsSpecification {
     public static Specification<Radars> comHoraEntre(LocalTime inicio, LocalTime fim) {
         return (root, query, cb) -> {
             if (inicio == null || fim == null) return null;
+            // O índice também ajuda no range scan (between) se a data já tiver filtrado a maior parte
             return cb.between(root.get("hora"), inicio, fim);
         };
     }

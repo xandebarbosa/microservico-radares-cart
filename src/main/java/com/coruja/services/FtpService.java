@@ -3,6 +3,8 @@ package com.coruja.services;
 import com.coruja.entities.LocalizacaoRadar;
 import com.coruja.entities.Radars;
 import com.coruja.repositories.LocalizacaoRadarRepository;
+import com.coruja.repositories.RadarsRepository;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.net.ftp.FTPClient;
 import org.apache.commons.net.ftp.FTPReply;
 import org.locationtech.jts.geom.GeometryFactory;
@@ -31,6 +33,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 @Service
+@Slf4j
 public class FtpService {
     private static final Logger logger = LoggerFactory.getLogger(FtpService.class);
     //private static final Logger LOGGER = Logger.getLogger(FtpService.class.getName());
@@ -59,6 +62,7 @@ public class FtpService {
 
     private LocalDateTime lastExecutionTime;
 
+    private final RadarsRepository radarsRepository;
     private final RadarsService radarsService;
     private final LocalizacaoRadarRepository localizacaoRepository;
 
@@ -70,9 +74,10 @@ public class FtpService {
             "^(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(.+?)\\s+(SP\\S+)\\s+(KM\\S+)$"
     );
 
-    public FtpService(RadarsService radarsService, LocalizacaoRadarRepository localizacaoRepository) {
+    public FtpService(RadarsService radarsService, LocalizacaoRadarRepository localizacaoRepository, RadarsRepository radarsRepository) {
         this.radarsService = radarsService;
         this.localizacaoRepository = localizacaoRepository;
+        this.radarsRepository = radarsRepository;
     }
 
     // AJUSTE: A anotação @Scheduled agora lê o valor do application.properties
