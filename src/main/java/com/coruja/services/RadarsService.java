@@ -1,8 +1,10 @@
 package com.coruja.services;
 
 import com.coruja.dto.FilterOptionsDTO;
+import com.coruja.dto.LocalizacaoRadarProjection;
 import com.coruja.dto.RadarsDTO;
 import com.coruja.entities.Radars;
+import com.coruja.repositories.LocalizacaoRadarRepository;
 import com.coruja.repositories.RadarsRepository;
 import com.coruja.specifications.RadarsSpecification;
 import jakarta.annotation.PostConstruct;
@@ -22,6 +24,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -42,28 +45,25 @@ public class RadarsService {
 
     private final RadarsRepository radarsRepository;
     private final RabbitTemplate rabbitTemplate;
-    private final ModelMapper modelMapper;
+    private final LocalizacaoRadarRepository localizacaoRadarRepository;
 
-    // Thread Pool dedicada para evitar bloquear o servidor principal
-    private final ExecutorService executorService = Executors.newFixedThreadPool(5);
+    // Thread Pool para tarefas assíncronas (RabbitMQ e Cache)
+    private final ExecutorService executorService = Executors.newFixedThreadPool(10);
 
-    public  RadarsService(RadarsRepository radarsRepository, RabbitTemplate rabbitTemplate, ModelMapper modelMapper) {
+    public  RadarsService(RadarsRepository radarsRepository, RabbitTemplate rabbitTemplate, LocalizacaoRadarRepository localizacaoRadarRepository) {
         this.radarsRepository = radarsRepository;
         this.rabbitTemplate = rabbitTemplate;
-        this.modelMapper = modelMapper;
+        this.localizacaoRadarRepository = localizacaoRadarRepository;
     }
 
     @PostConstruct
     public void checkDatabase() {
-        long count = radarsRepository.count();
-        log.info("=================================================");
-        log.info("📊 VERIFICAÇÃO DE BANCO DE DADOS (CART)");
-        log.info("📊 [INIT] Total de Radares encontrados: {}", count);
-        log.info("=================================================");
-
-        if (count == 0) {
-            log.warn("⚠️ O BANCO ESTÁ VAZIO! As listas de filtro virão vazias.");
-        }
+        // Log leve para não travar inicialização
+        CompletableFuture.runAsync(() -> {
+            long count = radarsRepository.count();
+            log.info("📊 [INIT] Total de Registros no banco (CART): {}", count);
+        });
+        initCache();
     }
 
     /**
@@ -82,32 +82,15 @@ public class RadarsService {
      * * A anotação @Transactional(readOnly = true) aumenta a performance no Postgres.
      */
     @Transactional(readOnly = true)
-    public Page<RadarsDTO> buscarComFiltros(
-            String placa, String praca, String rodovia, String km, String sentido,
-            LocalDate data, LocalTime horaInicial, LocalTime horaFinal,
-            Pageable pageable
-    ) {
-        // 1. Limpeza de Strings (Trim) para evitar falhas por espaços em branco
-        // Ex: "SP270 " vira "SP270"
-        String placaLimpa = normalize(placa);
-        String pracaLimpa = normalize(praca);
-        String rodoviaLimpa = normalize(rodovia);
-        String kmLimpo = normalize(km);
-        String sentidoLimpo = normalize(sentido);
-
-        // 2. Montagem da Query Dinâmica (Specification)
-        // O banco usará os índices criados na migração V3
-        Specification<Radars> spec = Specification.where(RadarsSpecification.comPlaca(placaLimpa))
-                .and(RadarsSpecification.comPraca(pracaLimpa))
-                .and(RadarsSpecification.comRodovia(rodoviaLimpa))
-                .and(RadarsSpecification.comKm(kmLimpo))
-                .and(RadarsSpecification.comSentido(sentidoLimpo))
+    public Page<RadarsDTO> buscarComFiltros(String placa, String praca, String rodovia, String km, String sentido, LocalDate data, LocalTime horaInicial, LocalTime horaFinal, Pageable pageable) {
+        Specification<Radars> spec = Specification.where(RadarsSpecification.comPlaca(normalize(placa)))
+                .and(RadarsSpecification.comPraca(normalize(praca)))
+                .and(RadarsSpecification.comRodovia(normalize(rodovia)))
+                .and(RadarsSpecification.comKm(normalize(km)))
+                .and(RadarsSpecification.comSentido(normalize(sentido)))
                 .and(RadarsSpecification.comData(data))
                 .and(RadarsSpecification.comHoraEntre(horaInicial, horaFinal));
-
-        // 3. Execução e Conversão
-        return radarsRepository.findAll(spec, pageable)
-                .map(this::converterParaDTO);
+        return radarsRepository.findAll(spec, pageable).map(this::converterParaDTO);
     }
 
     /**
@@ -169,35 +152,55 @@ public class RadarsService {
     @Transactional
     public void saveRadars(List<Radars> radarsList) {
         if (radarsList == null || radarsList.isEmpty()) return;
-
-        // 1. Salva todas as entidades e captura a lista de entidades salvas.
-        //    A lista 'savedRadars' agora contém as entidades com os IDs preenchidos.
         List<Radars> savedRadars = radarsRepository.saveAll(radarsList);
+        log.info("💾 Salvos {} registros.", savedRadars.size());
 
-        log.info("💾 Salvos {} registros no banco de dados com sucesso.", savedRadars.size());
-
-        // 2. Itera sobre a lista de entidades JÁ SALVAS para enviar ao RabbitMQ.
-        savedRadars.forEach(this::enviarMensagemParaRabbitMQ);
+        // Envia para o RabbitMQ (assincronamente para não travar o banco)
+        CompletableFuture.runAsync(() ->
+                savedRadars.forEach(this::enviarMensagemParaRabbitMQ), executorService
+        );
     }
 
     /**
      * NOVO: Método auxiliar para encapsular a lógica de envio e o tratamento de erro.
      * @param radar O objeto radar para o qual a mensagem será enviada.
      */
+    //DEPOIS VOLTAR ESSE CODIGO DE ENVIO PELO RABBITMQ
+//    private void enviarMensagemParaRabbitMQ(Radars radar) {
+//        if (!isValidRadar(radar)) { // Lógica de validação em um método auxiliar
+//            log.warn("Dados incompletos para a placa: {}. Mensagem não será enviada.", radar.getPlaca());
+//            return;
+//        }
+//
+//        String mensagem = formatMessage(radar);
+//
+//        try {
+//            rabbitTemplate.convertAndSend(exchangeName, routingKey, mensagem);
+//            log.info("Mensagem enviada para RabbitMQ com routingKey [{}]: {}", routingKey, mensagem);
+//        } catch (AmqpException e) {
+//            // Tratamento de erro resiliente
+//            log.warn("Falha ao enviar mensagem para RabbitMQ - Placa: {}. Causa: {}", radar.getPlaca(), e.getMessage());
+//        }
+//    }
+
     private void enviarMensagemParaRabbitMQ(Radars radar) {
-        if (!isValidRadar(radar)) { // Lógica de validação em um método auxiliar
-            log.warn("Dados incompletos para a placa: {}. Mensagem não será enviada.", radar.getPlaca());
+        if (!isValidRadar(radar)) return;
+
+        // 1. REGRA DAS 5 HORAS
+        // Verifica se a passagem do radar ocorreu nas últimas 5 horas
+        LocalDateTime dataHoraRadar = LocalDateTime.of(radar.getData(), radar.getHora());
+        LocalDateTime limite = LocalDateTime.now().minusHours(5);
+
+        if (dataHoraRadar.isBefore(limite)) {
+            // Se for antigo, apenas ignora o envio (mas já foi salvo no banco acima)
             return;
         }
 
-        String mensagem = formatMessage(radar);
-
         try {
-            rabbitTemplate.convertAndSend(exchangeName, routingKey, mensagem);
-            log.info("Mensagem enviada para RabbitMQ com routingKey [{}]: {}", routingKey, mensagem);
+            String msg = formatMessage(radar);
+            rabbitTemplate.convertAndSend(exchangeName, routingKey, msg);
         } catch (AmqpException e) {
-            // Tratamento de erro resiliente
-            log.warn("Falha ao enviar mensagem para RabbitMQ - Placa: {}. Causa: {}", radar.getPlaca(), e.getMessage());
+            log.warn("Falha RabbitMQ Placa {}: {}", radar.getPlaca(), e.getMessage());
         }
     }
 
@@ -231,11 +234,18 @@ public class RadarsService {
      * 2. Se não tiver, busca no banco e salva.
      */
     @Cacheable(value = "kms-rodovia-cart-v2", key = "#rodovia", unless = "#result == null || #result.isEmpty()")
+    @Transactional(readOnly = true)
     public List<String> getKmsForRodovia(String rodovia) {
-        if (rodovia == null || rodovia.isBlank()) {
-            return new ArrayList<>(); // Retorna lista vazia se nenhuma rodovia for fornecida
+        if (rodovia == null || rodovia.isBlank()) return new ArrayList<>();
+        try {
+            // Usa query nativa que aproveita o índice idx_radars_rodovia_km
+            List<String> kms = radarsRepository.findDistinctKmsByRodoviaNative(normalize(rodovia));
+            return orEmpty(kms);
+        } catch (Exception e) {
+            log.error("❌ Erro ao buscar KMs para rodovia '{}': {}", rodovia, e.toString());
+            // Retorna vazio para não causar erro 500 no front
+            return new ArrayList<>();
         }
-        return radarsRepository.findDistinctKmsByRodovia(normalize(rodovia));
     }
 
     /**
@@ -248,82 +258,77 @@ public class RadarsService {
     }
 
     /**
-     * TAREFA AGENDADA (Cache Warmer):
-     * Roda a cada 10 minutos (600000ms) para atualizar o cache em SEGUNDO PLANO.
      * O usuário nunca sentirá a lentidão, pois o @CachePut atualiza o Redis silenciosamente.
+     * CONFIGURAÇÃO: Roda todos os dias às 04:00 da manhã
+     * Cron: Seg(0) Min(0) Hora(4) Dia(*) Mês(*) DiaSemana(*)
      */
-    @Scheduled(fixedRate = 600000) // 10 minutos
+    @Scheduled(cron = "0 0 4 * * *")
     @CachePut(value = "opcoes-filtro-cart-v2", unless = "#result == null || #result.rodovias.isEmpty()")
     public FilterOptionsDTO atualizarCacheFiltros() {
-        log.info("🔄 [Background] Iniciando atualização completa de caches (Filtros + KMs)...");
+        log.info("🌙 [Cache Diário] Iniciando atualização de KMs e Filtros (Execução Programada)...");
 
-        FilterOptionsDTO filtros = buscarDadosNoBanco(); // Busca filtros gerais
+        // 1. Busca os filtros gerais (Rodovias, Praças, Sentidos)
+        FilterOptionsDTO filtros = buscarDadosNoBanco();
 
-        if (filtros.getRodovias() != null && !filtros.getRodovias().isEmpty()) {
-            // Atualiza KMs em paralelo sem bloquear a thread principal do Scheduler por muito tempo
-            CompletableFuture.runAsync(() -> {
-                filtros.getRodovias().forEach(rodovia -> {
-                    try {
-                        atualizarCacheKms(rodovia);
-                    } catch (Exception e) {
-                        log.warn("Erro ao atualizar cache KM para {}: {}", rodovia, e.getMessage());
-                    }
-                });
-            }, executorService);
+        if (filtros != null && filtros.getRodovias() != null) {
+            log.info("🛣️ Encontradas {} rodovias. Atualizando KMs para cada uma...", filtros.getRodovias().size());
+
+            // 2. Dispara a atualização dos KMs de cada rodovia em paralelo
+            // Isso garante que quando o usuário entrar de manhã, o Redis já tenha os dados.
+            List<CompletableFuture<Void>> futures = filtros.getRodovias().stream()
+                    .map(rodovia -> CompletableFuture.runAsync(() -> {
+                        try {
+                            // Chama o método anotado com @CachePut para forçar a ida ao banco e atualização do Redis
+                            atualizarCacheKms(rodovia);
+                        } catch (Exception e) {
+                            log.warn("Falha ao atualizar cache KMs da rodovia {}: {}", rodovia, e.getMessage());
+                        }
+                    }, executorService))
+                    .toList();
+
+            // Opcional: Aguarda todos terminarem para logar o fim
+            // CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
         }
+
+        log.info("✅ [Cache Diário] Processo de atualização finalizado.");
         return filtros;
     }
 
     /**
      * Inicializa o cache assim que o serviço sobe, para o primeiro usuário não esperar.
      */
-    @PostConstruct
+    // Método auxiliar público para ser chamado pelo @PostConstruct
     public void initCache() {
-        CompletableFuture.runAsync(() -> {
-            try {
-                // Pequeno delay para garantir que o banco já subiu totalmente
-                log.info("🚀 [Startup] Iniciando aquecimento do cache de filtros...");
-                Thread.sleep(5000);
-                atualizarCacheFiltros();
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        });
+        CompletableFuture.runAsync(this::atualizarCacheFiltros, executorService);
     }
 
     // Método privado com a lógica pesada de banco
     private FilterOptionsDTO buscarDadosNoBanco() {
-        long start = System.currentTimeMillis();
         try {
-            log.info("🔍 [Banco] Executando queries de distinção...");
-            // Executa queries em paralelo
-            var rodoviasFuture = CompletableFuture.supplyAsync(radarsRepository::findDistinctRodovias, executorService);
-            var pracasFuture = CompletableFuture.supplyAsync(radarsRepository::findDistinctPracas, executorService);
-            var kmsFuture = CompletableFuture.supplyAsync(radarsRepository::findDistinctKms, executorService);
-            var sentidosFuture = CompletableFuture.supplyAsync(radarsRepository::findDistinctSentidos, executorService);
+            // Executa de forma sequencial mas segura para evitar sobrecarga simultânea
+            List<String> rodovias = orEmpty(radarsRepository.findDistinctRodovias());
+            List<String> pracas = orEmpty(radarsRepository.findDistinctPracas());
+            List<String> kms = orEmpty(radarsRepository.findDistinctKms());
+            List<String> sentidos = orEmpty(radarsRepository.findDistinctSentidos());
 
-            CompletableFuture.allOf(rodoviasFuture, pracasFuture, kmsFuture, sentidosFuture)
-                    .get(45, TimeUnit.SECONDS); // Timeout igual ao do BFF
-
-            FilterOptionsDTO dto = new FilterOptionsDTO(
-                    rodoviasFuture.get(),
-                    pracasFuture.get(),
-                    kmsFuture.get(),
-                    sentidosFuture.get()
-            );
-
-            log.info("✅ [Banco de Dados] Filtros carregados e cacheados em {}ms", (System.currentTimeMillis() - start));
-            return dto;
+            return new FilterOptionsDTO(rodovias, pracas, kms, sentidos);
         } catch (Exception e) {
-            // CORREÇÃO CRUCIAL: Loga o erro mas retorna objeto VAZIO em vez de NULL
-            log.error("❌ ERRO FATAL buscando filtros: {}", e.toString());
+            log.error("❌ Erro ao buscar filtros no banco: {}", e.toString());
             return new FilterOptionsDTO(new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new ArrayList<>());
         }
     }
 
-    private String normalize(String input) {
-        return (input != null) ? input.trim() : null;
+    /**
+     * NOVO MÉTODO: Retorna todas as localizações de radar para plotar no mapa.
+     * Cache opcional: Como são dados estáticos, podemos cachear.
+     */
+    @Cacheable(value = "mapa-radares-cart", unless = "#result == null || #result.isEmpty()")
+    public List<LocalizacaoRadarProjection> listarTodasLocalizacoes() {
+        return localizacaoRadarRepository.findAllLocations();
     }
+
+    private <T> List<T> orEmpty(List<T> list) { return list == null ? new ArrayList<>() : list; }
+    private String normalize(String input) { return (input != null) ? input.trim() : null; }
 
     private RadarsDTO converterParaDTO(Radars radars) {
         return RadarsDTO.builder()

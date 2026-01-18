@@ -1,6 +1,7 @@
 package com.coruja.controllers;
 
 import com.coruja.dto.FilterOptionsDTO;
+import com.coruja.dto.LocalizacaoRadarProjection;
 import com.coruja.dto.RadarsDTO;
 import com.coruja.repositories.RadarsRepository;
 import com.coruja.services.RadarsService;
@@ -103,5 +104,9 @@ public class RadarsController {
         return ResponseEntity.ok(resultado);
     }
 
+    @GetMapping("/all-locations")
+    public ResponseEntity<List<LocalizacaoRadarProjection>> getRadarLocations() {
+        return ResponseEntity.ok(radarsService.listarTodasLocalizacoes());
+    }
 
 }

@@ -31,6 +31,7 @@ import java.util.stream.Stream;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @Slf4j
@@ -62,7 +63,6 @@ public class FtpService {
 
     private LocalDateTime lastExecutionTime;
 
-    private final RadarsRepository radarsRepository;
     private final RadarsService radarsService;
     private final LocalizacaoRadarRepository localizacaoRepository;
 
@@ -74,10 +74,9 @@ public class FtpService {
             "^(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(.+?)\\s+(SP\\S+)\\s+(KM\\S+)$"
     );
 
-    public FtpService(RadarsService radarsService, LocalizacaoRadarRepository localizacaoRepository, RadarsRepository radarsRepository) {
+    public FtpService(RadarsService radarsService, LocalizacaoRadarRepository localizacaoRepository) {
         this.radarsService = radarsService;
         this.localizacaoRepository = localizacaoRepository;
-        this.radarsRepository = radarsRepository;
     }
 
     // AJUSTE: A anotação @Scheduled agora lê o valor do application.properties
@@ -86,7 +85,6 @@ public class FtpService {
 
         // Armazenamos a hora de início para um cálculo mais preciso
         // LocalDateTime horaInicio = LocalDateTime.now();
-
         lastExecutionTime = LocalDateTime.now();
         logger.info("Iniciando verificação de arquivos no FTP às {}...",  lastExecutionTime);
         //horaInicio.format(DateTimeFormatter.ofPattern("HH:mm:ss"))
@@ -121,12 +119,18 @@ public class FtpService {
             }
 
             logger.info("Encontrados {} novos arquivos para processar.", novosArquivos.size());
+
+            // Pré-carrega o cache de localizações UMA VEZ antes de processar os arquivos
+            // Isso evita o erro de conexão do banco por excesso de consultas
+            Map<String, LocalizacaoRadar> mapaLocalizacao = carregarMapaLocalizacao();
+
             List<Radars> todosOsRadares = new ArrayList<>();
 
             for (String nomeArquivo : novosArquivos) {
                 baixarArquivo(ftpClient, nomeArquivo, localPath).ifPresent(arquivoLocal -> {
                     logger.info("Processando arquivo: {}", nomeArquivo);
-                    todosOsRadares.addAll(processarArquivo(arquivoLocal));
+                    // Passa o mapa carregado para o método de processamento
+                    todosOsRadares.addAll(processarArquivo(arquivoLocal, mapaLocalizacao));
                 });
             }
 
@@ -150,6 +154,33 @@ public class FtpService {
                     proximaExecucao.format(DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm:ss")));
             logger.info("*******************************************\n");
         }
+    }
+
+    // =========================================================================
+    // OTIMIZAÇÃO: Carregamento em Memória
+    // =========================================================================
+    private Map<String, LocalizacaoRadar> carregarMapaLocalizacao() {
+        try {
+            logger.info("🗺️ Carregando cache de localizações do banco...");
+            List<LocalizacaoRadar> todasLocs = localizacaoRepository.findAll();
+            Map<String, LocalizacaoRadar> map = new HashMap<>();
+
+            for (LocalizacaoRadar loc : todasLocs) {
+                if (loc.getPraca() != null) {
+                    // Normaliza a chave (trim + uppercase) para facilitar o match
+                    map.put(normalizeKey(loc.getPraca()), loc);
+                }
+            }
+            logger.info("🗺️ Cache carregado: {} registros.", map.size());
+            return map;
+        } catch (Exception e) {
+            logger.error("❌ Erro ao carregar cache de localizações: {}", e.getMessage());
+            return new HashMap<>(); // Retorna vazio para não travar o processo, apenas os vínculos falharão
+        }
+    }
+
+    private String normalizeKey(String input) {
+        return input == null ? "" : input.trim().toUpperCase(); // Normalização simples
     }
 
     @Scheduled(fixedDelay = 1000) // Atualiza a cada segundo
@@ -197,11 +228,17 @@ public class FtpService {
         return Optional.empty();
     }
 
-    private List<Radars> processarArquivo(Path arquivoLocal) {
+    // =========================================================================
+    // Processamento de Arquivo
+    // =========================================================================
+
+    // Método agora recebe o MAPA, evitando consultas ao banco dentro do loop
+    @Transactional // Transactional no nível do arquivo para performance de insert
+    public List<Radars> processarArquivo(Path arquivoLocal, Map<String, LocalizacaoRadar> mapaLocalizacao) {
         try (Stream<String> lines = Files.lines(arquivoLocal, StandardCharsets.ISO_8859_1)) {
             return lines
-                    .map(this::parseLineWithRegex) // Usa o novo método com Regex
-                    .filter(Objects::nonNull)      // Filtra linhas que falharam no parse
+                    .map(linha -> parseLineWithRegex(linha, mapaLocalizacao)) // Passa o mapa
+                    .filter(Objects::nonNull)
                     .collect(Collectors.toList());
         } catch (IOException e) {
             logger.error("Falha ao ler o arquivo local: {}", arquivoLocal, e);
@@ -213,7 +250,7 @@ public class FtpService {
      * NOVO MÉTODO DE PARSING - A Correção do Bug
      * Usa uma Expressão Regular para extrair os dados de forma segura.
      */
-    private Radars parseLineWithRegex(String linha) {
+    private Radars parseLineWithRegex(String linha, Map<String, LocalizacaoRadar> mapaLocalizacao) {
         // Ignora linhas de cabeçalho, rodapé ou vazias
         if (linha.trim().isEmpty() || linha.contains("Data_Transação") || linha.startsWith("Changed database") || linha.matches("[-\\s]+") || linha.matches("\\(\\d+ rows affected\\)")) {
             return null;
@@ -229,21 +266,17 @@ public class FtpService {
             String dataStr = matcher.group(1);
             String horaStr = matcher.group(2);
             String placaBruta = matcher.group(3);
-
-            // CORREÇÃO DA LÓGICA DA PLACA: Agora é segura para qualquer tamanho.
-            String placa = placaBruta.replaceAll("[^A-Za-z0-9]", "");
-            if (placa.length() > 7) {
-                placa = placa.substring(0, 7);
-            }
-
-            // CORREÇÃO PARA CAMPOS OPCIONAIS: Verificamos se os grupos foram capturados.
             String pracaESentido = matcher.group(4).trim();
-            String rodovia = matcher.group(5); // Não é mais opcional na regex
+            String rodovia = matcher.group(5);
             String km = matcher.group(6).replace("KM", "").trim();
 
+            String placa = placaBruta.replaceAll("[^A-Za-z0-9]", "");
+            if (placa.length() > 7) placa = placa.substring(0, 7);
+
+            // Lógica para separar praça e sentido
             String[] partesPraca = pracaESentido.split("\\s+");
-            String sentido = "N/I"; // Valor padrão
-            String praca = pracaESentido; // Por padrão, tudo é a praça
+            String sentido = "N/I";
+            String praca = pracaESentido;
 
             if (partesPraca.length > 1) {
                 sentido = partesPraca[partesPraca.length - 1];
@@ -253,20 +286,10 @@ public class FtpService {
             LocalDate data = LocalDate.parse(dataStr, DateTimeFormatter.ofPattern("yyyy-MM-dd"));
             LocalTime hora = LocalTime.parse(horaStr, DateTimeFormatter.ofPattern("HH:mm:ss[.SSS]"));
 
-            // 1. Busca na tabela "De-Para" pelo objeto de localização completo.
-            LocalizacaoRadar localizacaoDoRadar = null; // 1. Começa como nulo
-            try {
-                // 2. Tenta buscar na tabela "De-Para"
-                localizacaoDoRadar = localizacaoRepository.findByPraca(praca)
-                        .orElse(null); // Se encontrar, atribui
+            // BUSCA OTIMIZADA: Usa o Map em vez do Repository
+            // Isso é 1000x mais rápido e não derruba a conexão
+            LocalizacaoRadar localizacaoDoRadar = mapaLocalizacao.get(normalizeKey(praca));
 
-            } catch (Exception e) {
-                // 3. Se falhar (ex: Tabela não existe), avisa e continua
-                logger.warn("Não foi possível consultar a tabela 'localizacao_radar' (ela pode não existir). O campo de localização ficará nulo. Causa: {}", e.getMessage());
-            }
-            // ***************************************************************
-
-            // 4. Cria o objeto Radars com o que foi possível obter
             return new Radars(data, hora, placa, praca, rodovia, km, sentido, localizacaoDoRadar);
 
         } catch (Exception e) {

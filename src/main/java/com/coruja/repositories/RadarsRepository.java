@@ -43,6 +43,10 @@ public interface RadarsRepository extends JpaRepository<Radars, Long>, JpaSpecif
     @Query("SELECT DISTINCT r.km FROM Radars r WHERE r.rodovia = :rodovia AND r.km IS NOT NULL ORDER BY r.km")
     List<String> findDistinctKmsByRodovia(@Param("rodovia") String rodovia);
 
+    // Query Nativa para performance extrema na busca de KMs, Usa o índice V4 diretamente
+    @Query(value = "SELECT DISTINCT km FROM radars_cart WHERE rodovia = :rodovia AND km IS NOT NULL AND km <> '' ORDER BY km", nativeQuery = true)
+    List<String> findDistinctKmsByRodoviaNative(@Param("rodovia") String rodovia);
+
     /**
      * Busca radares dentro de um raio (em metros) de uma coordenada, filtrando por data e hora.
      * Usa PostGIS para alta performance.
