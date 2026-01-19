@@ -16,14 +16,14 @@ public class RadarsSpecification {
     public static Specification<Radars> comPlaca(String placa) {
         return (root, query, cb) -> {
             if (placa == null || placa.isBlank()) return null;
-            return cb.equal(root.get("placa"), placa);
+            return cb.like(cb.upper(root.get("placa")), "%" + placa.toUpperCase().trim() + "%");
         };
     }
 
     public static Specification<Radars> comPraca(String praca) {
         return (root, query, cb) -> {
             if (praca == null || praca.isBlank()) return null;
-            return cb.equal(root.get("praca"), praca);
+            return cb.like(cb.upper(root.get("praca")), "%" + praca.toUpperCase().trim() + "%");
         };
     }
 
@@ -34,21 +34,23 @@ public class RadarsSpecification {
     public static Specification<Radars> comRodovia(String rodovia) {
         return (root, query, cb) -> {
             if (rodovia == null || rodovia.isBlank()) return null;
-            return cb.equal(root.get("rodovia"), rodovia);
+            return cb.like(cb.upper(root.get("rodovia")), "%" + rodovia.toUpperCase().trim() + "%");
         };
     }
 
     public static Specification<Radars> comKm(String km) {
         return (root, query, cb) -> {
             if (km == null || km.isBlank()) return null;
-            return cb.equal(root.get("km"), km);
+            // ou usamos LIKE simples. Aqui optamos pelo LIKE simples para maior compatibilidade.
+            return cb.like(root.get("km"), "%" + km.trim() + "%");
         };
     }
 
     public static Specification<Radars> comSentido(String sentido) {
         return (root, query, cb) -> {
             if (sentido == null || sentido.isBlank()) return null;
-            return cb.equal(root.get("sentido"), sentido);
+            // Usa Equal com Upper para ignorar case, pois sentido geralmente é uma palavra exata
+            return cb.equal(cb.upper(root.get("sentido")), sentido.toUpperCase().trim());
         };
     }
 

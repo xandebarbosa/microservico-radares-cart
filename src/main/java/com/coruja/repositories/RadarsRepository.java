@@ -16,36 +16,27 @@ import java.util.List;
 @Repository
 public interface RadarsRepository extends JpaRepository<Radars, Long>, JpaSpecificationExecutor<Radars> {
 
-    // A mágica acontece aqui! Ao estender JpaSpecificationExecutor, ganhamos o método:
-    // Page<Radars> findAll(Specification<Radars> spec, Pageable pageable);
-    // Não precisamos mais de métodos customizados como findByFiltersLocal.
-
-    // Spring Data JPA entende esse nome de método e cria a query:
-    // SELECT * FROM radars WHERE placa = ?
-    Page<Radars> findByPlaca(String placa, Pageable pageable);
+    // O Spring cria automaticamente: SELECT * FROM radars WHERE placa LIKE %?%
+    Page<Radars> findByPlacaContaining(String placa, Pageable pageable);
 
     // E aqui também, ele cria a query com AND para todos os campos:
     // SELECT * FROM radars WHERE rodovia = ? AND km = ? AND sentido = ?
     Page<Radars> findByRodoviaAndKmAndSentido(String rodovia, String km, String sentido, Pageable pageable);
 
-    @Query("SELECT DISTINCT r.rodovia FROM Radars r WHERE r.rodovia IS NOT NULL AND r.rodovia <> '' ORDER BY r.rodovia")
-    List<String> findDistinctRodovias();
+    @Query(value = "SELECT DISTINCT rodovia FROM radars_cart WHERE rodovia IS NOT NULL AND rodovia <> '' ORDER BY rodovia", nativeQuery = true)
+    List<String> findDistinctRodoviasNative();
 
-    @Query("SELECT DISTINCT r.praca FROM Radars r WHERE r.praca IS NOT NULL AND r.praca <> '' ORDER BY r.praca")
-    List<String> findDistinctPracas();
+    @Query(value = "SELECT DISTINCT praca FROM radars_cart WHERE praca IS NOT NULL AND praca <> '' ORDER BY praca", nativeQuery = true)
+    List<String> findDistinctPracasNative();
 
-    @Query("SELECT DISTINCT r.km FROM Radars r WHERE r.km IS NOT NULL AND r.km <> '' ORDER BY r.km")
-    List<String> findDistinctKms();
+    @Query(value = "SELECT DISTINCT km FROM radars_cart WHERE km IS NOT NULL AND km <> '' ORDER BY km", nativeQuery = true)
+    List<String> findDistinctKmsNative();
 
-    @Query("SELECT DISTINCT r.sentido FROM Radars r WHERE r.sentido IS NOT NULL AND r.sentido <> '' ORDER BY r.sentido")
-    List<String> findDistinctSentidos();
+    @Query(value = "SELECT DISTINCT sentido FROM radars_cart WHERE sentido IS NOT NULL AND sentido <> '' ORDER BY sentido", nativeQuery = true)
+    List<String> findDistinctSentidosNative();
 
-    @Query("SELECT DISTINCT r.km FROM Radars r WHERE r.rodovia = :rodovia AND r.km IS NOT NULL ORDER BY r.km")
-    List<String> findDistinctKmsByRodovia(@Param("rodovia") String rodovia);
-
-    // Query Nativa para performance extrema na busca de KMs, Usa o índice V4 diretamente
-    @Query(value = "SELECT DISTINCT km FROM radars_cart WHERE rodovia = :rodovia AND km IS NOT NULL AND km <> '' ORDER BY km", nativeQuery = true)
-    List<String> findDistinctKmsByRodoviaNative(@Param("rodovia") String rodovia);
+    @Query(value = "SELECT DISTINCT km FROM radars_cart WHERE rodovia = ?1 AND km IS NOT NULL AND km <> '' ORDER BY km", nativeQuery = true)
+    List<String> findDistinctKmsByRodoviaNative(String rodovia);
 
     /**
      * Busca radares dentro de um raio (em metros) de uma coordenada, filtrando por data e hora.

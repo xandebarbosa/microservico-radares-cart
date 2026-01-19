@@ -8,9 +8,7 @@ import com.coruja.repositories.LocalizacaoRadarRepository;
 import com.coruja.repositories.RadarsRepository;
 import com.coruja.specifications.RadarsSpecification;
 import jakarta.annotation.PostConstruct;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.modelmapper.ModelMapper;
 import org.springframework.amqp.AmqpException;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Value;
@@ -31,7 +29,6 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
 
 @Service
 @Slf4j
@@ -101,7 +98,7 @@ public class RadarsService {
         if (placa == null || placa.isBlank()) {
             throw new IllegalArgumentException("O parâmetro 'placa' é obrigatório.");
         }
-        return radarsRepository.findByPlaca(placa, pageable).map(this::converterParaDTO);
+        return radarsRepository.findByPlacaContaining(placa, pageable).map(this::converterParaDTO);
     }
 
     /**
@@ -253,8 +250,8 @@ public class RadarsService {
      * Usado pelo Scheduler.
      */
     @CachePut(value = "kms-rodovia-cart-v2", key = "#rodovia", unless = "#result == null || #result.isEmpty()")
-    public List<String> atualizarCacheKms(String rodovia) {
-        return radarsRepository.findDistinctKmsByRodovia(rodovia);
+    public void atualizarCacheKms(String rodovia) {
+        radarsRepository.findDistinctKmsByRodoviaNative(rodovia);
     }
 
     /**
@@ -264,13 +261,13 @@ public class RadarsService {
      */
     @Scheduled(cron = "0 0 4 * * *")
     @CachePut(value = "opcoes-filtro-cart-v2", unless = "#result == null || #result.rodovias.isEmpty()")
-    public FilterOptionsDTO atualizarCacheFiltros() {
+    public void atualizarCacheFiltros() {
         log.info("🌙 [Cache Diário] Iniciando atualização de KMs e Filtros (Execução Programada)...");
 
         // 1. Busca os filtros gerais (Rodovias, Praças, Sentidos)
         FilterOptionsDTO filtros = buscarDadosNoBanco();
 
-        if (filtros != null && filtros.getRodovias() != null) {
+        if (filtros.getRodovias() != null) {
             log.info("🛣️ Encontradas {} rodovias. Atualizando KMs para cada uma...", filtros.getRodovias().size());
 
             // 2. Dispara a atualização dos KMs de cada rodovia em paralelo
@@ -291,7 +288,6 @@ public class RadarsService {
         }
 
         log.info("✅ [Cache Diário] Processo de atualização finalizado.");
-        return filtros;
     }
 
     /**
@@ -305,13 +301,35 @@ public class RadarsService {
     // Método privado com a lógica pesada de banco
     private FilterOptionsDTO buscarDadosNoBanco() {
         try {
-            // Executa de forma sequencial mas segura para evitar sobrecarga simultânea
-            List<String> rodovias = orEmpty(radarsRepository.findDistinctRodovias());
-            List<String> pracas = orEmpty(radarsRepository.findDistinctPracas());
-            List<String> kms = orEmpty(radarsRepository.findDistinctKms());
-            List<String> sentidos = orEmpty(radarsRepository.findDistinctSentidos());
 
-            return new FilterOptionsDTO(rodovias, pracas, kms, sentidos);
+            log.info("⚡ Iniciando busca paralela de filtros no banco de dados...");
+            long start = System.currentTimeMillis();
+            // ✅ REFATORADO: Execução Paralela
+            // Dispara as 4 consultas simultaneamente usando o ThreadPool (executorService) já configurado
+            CompletableFuture<List<String>> rodoviasFuture = CompletableFuture.supplyAsync(
+                    () -> orEmpty(radarsRepository.findDistinctRodoviasNative()), executorService);
+
+            CompletableFuture<List<String>> pracasFuture = CompletableFuture.supplyAsync(
+                    () -> orEmpty(radarsRepository.findDistinctPracasNative()), executorService);
+
+            CompletableFuture<List<String>> kmsFuture = CompletableFuture.supplyAsync(
+                    () -> orEmpty(radarsRepository.findDistinctKmsNative()), executorService);
+
+            CompletableFuture<List<String>> sentidosFuture = CompletableFuture.supplyAsync(
+                    () -> orEmpty(radarsRepository.findDistinctSentidosNative()), executorService);
+
+            // Aguarda TODAS terminarem (join)
+            CompletableFuture.allOf(rodoviasFuture, pracasFuture, kmsFuture, sentidosFuture).join();
+
+            long duration = System.currentTimeMillis() - start;
+            log.info("✅ Busca de filtros finalizada em {} ms", duration);
+
+            return new FilterOptionsDTO(
+                    rodoviasFuture.get(),
+                    pracasFuture.get(),
+                    kmsFuture.get(),
+                    sentidosFuture.get()
+            );
         } catch (Exception e) {
             log.error("❌ Erro ao buscar filtros no banco: {}", e.toString());
             return new FilterOptionsDTO(new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new ArrayList<>());
