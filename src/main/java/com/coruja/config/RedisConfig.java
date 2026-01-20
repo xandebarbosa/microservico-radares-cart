@@ -17,59 +17,102 @@ import org.springframework.data.redis.serializer.RedisSerializationContext;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
 
 import java.time.Duration;
+import java.util.HashMap;
+import java.util.Map;
 
 @Configuration
 @EnableCaching
 public class RedisConfig {
 
-    @Value("${spring.cache.redis.time-to-live:86400000}") // Padrão: 24 horas (em ms)
-    private long timeToLive;
     /**
-     * Configura o Serializador JSON com suporte a Page e Datas (Java 8).
+     * ✅ CONFIGURAÇÃO OTIMIZADA DE SERIALIZAÇÃO
      */
     @Bean
-    public RedisCacheConfiguration cacheConfiguration() {
-        // 1. Configura o ObjectMapper para lidar com Page e Datas
-        ObjectMapper objectMapper = new ObjectMapper();
+    public ObjectMapper redisObjectMapper() {
+        ObjectMapper mapper = new ObjectMapper();
+        mapper.registerModule(new JavaTimeModule());
+        mapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
-        // Habilita conversão correta de LocalDate/LocalDateTime
-        objectMapper.registerModule(new JavaTimeModule());
-        objectMapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
-
-        // ✅ CRUCIAL: Habilita tipagem dinâmica.
-        // Isso permite que o Redis saiba que o JSON salvo é um PageImpl, e não um LinkedHashMap.
-        objectMapper.activateDefaultTyping(
-                objectMapper.getPolymorphicTypeValidator(),
+        // Tipagem dinâmica para suporte a Page<>
+        mapper.activateDefaultTyping(
+                mapper.getPolymorphicTypeValidator(),
                 ObjectMapper.DefaultTyping.NON_FINAL,
                 JsonTypeInfo.As.PROPERTY
         );
 
-        // 2. Cria o serializador usando o Mapper configurado
-        GenericJackson2JsonRedisSerializer serializer = new GenericJackson2JsonRedisSerializer(objectMapper);
+        return mapper;
+    }
 
-        // 3. Retorna a configuração padrão usando esse serializador
+    /**
+     * ✅ CACHE CONFIGURATION COM TTL OTIMIZADO
+     * - Dados voláteis: 5-10 minutos
+     * - Dados semi-estáveis: 30-60 minutos
+     * - Dados estáveis: 2-24 horas
+     */
+    @Bean
+    public RedisCacheConfiguration cacheConfiguration(ObjectMapper redisObjectMapper) {
+        GenericJackson2JsonRedisSerializer serializer =
+                new GenericJackson2JsonRedisSerializer(redisObjectMapper);
+
         return RedisCacheConfiguration.defaultCacheConfig()
-                .entryTtl(Duration.ofMillis(timeToLive))
+                .entryTtl(Duration.ofMinutes(10)) // TTL padrão: 10 minutos
                 .disableCachingNullValues()
-                .serializeKeysWith(RedisSerializationContext.SerializationPair.fromSerializer(new StringRedisSerializer()))
-                .serializeValuesWith(RedisSerializationContext.SerializationPair.fromSerializer(serializer));
+                .serializeKeysWith(
+                        RedisSerializationContext.SerializationPair.fromSerializer(
+                                new StringRedisSerializer()
+                        )
+                )
+                .serializeValuesWith(
+                        RedisSerializationContext.SerializationPair.fromSerializer(serializer)
+                );
+    }
+
+    /**
+     * ✅ CUSTOMIZAÇÃO POR CACHE
+     */
+    @Bean
+    public RedisCacheManagerBuilderCustomizer redisCacheManagerBuilderCustomizer(
+            RedisCacheConfiguration defaultConfig) {
+
+        return builder -> {
+            Map<String, RedisCacheConfiguration> cacheConfigs = new HashMap<>();
+
+            // Cache de buscas de radares (curto - dados mudam rápido)
+            cacheConfigs.put("radars-search",
+                    defaultConfig.entryTtl(Duration.ofMinutes(5)));
+
+            // Cache de busca por placa (médio)
+            cacheConfigs.put("radars-placa",
+                    defaultConfig.entryTtl(Duration.ofMinutes(10)));
+
+            // Cache de filtros/metadata (longo - dados estáveis)
+            cacheConfigs.put("opcoes-filtro-cart",
+                    defaultConfig.entryTtl(Duration.ofHours(2)));
+
+            // Cache de KMs por rodovia (médio)
+            cacheConfigs.put("kms-rodovia-cart",
+                    defaultConfig.entryTtl(Duration.ofMinutes(30)));
+
+            // Cache do mapa (muito longo - dados raramente mudam)
+            cacheConfigs.put("mapa-radares-cart",
+                    defaultConfig.entryTtl(Duration.ofHours(24)));
+
+            // Cache de localizações (BFF)
+            cacheConfigs.put("locais-radares-bff",
+                    defaultConfig.entryTtl(Duration.ofHours(24)));
+
+            builder.withInitialCacheConfigurations(cacheConfigs);
+        };
     }
 
     @Bean
-    public RedisCacheManager cacheManager(RedisConnectionFactory connectionFactory, RedisCacheConfiguration cacheConfiguration) {
+    public RedisCacheManager cacheManager(
+            RedisConnectionFactory connectionFactory,
+            RedisCacheConfiguration cacheConfiguration) {
+
         return RedisCacheManager.builder(connectionFactory)
                 .cacheDefaults(cacheConfiguration)
+                .transactionAware() // ✅ Importante para consistência
                 .build();
-    }
-
-    @Bean
-    public RedisCacheManagerBuilderCustomizer redisCacheManagerBuilderCustomizer(RedisCacheConfiguration cacheConfiguration) {
-        return (builder) -> builder
-                .withCacheConfiguration("opcoes-filtro-cart-v2",
-                        cacheConfiguration.entryTtl(Duration.ofHours(30))) // Filtros duram 30 horas (ajustado de minutos para horas conforme seu comentário anterior parecia indicar longa duração, ou mantenha Duration.ofMinutes(30) se preferir)
-                .withCacheConfiguration("kms-rodovia-cart-v2",
-                        cacheConfiguration.entryTtl(Duration.ofSeconds(30)));
-        // Adicione aqui a configuração para o cache de radares, se quiser um tempo específico
-        // .withCacheConfiguration("radars-search", cacheConfiguration.entryTtl(Duration.ofMinutes(10)));
     }
 }
