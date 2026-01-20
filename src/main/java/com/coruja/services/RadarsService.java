@@ -70,7 +70,8 @@ public class RadarsService {
     @Transactional(readOnly = true)
     @Cacheable(
             value = "radars-search",
-            key = "#placa + '_' + #rodovia + '_' + #data + '_' + #pageable.pageNumber",
+            // Cache key otimizada
+            key = "{#placa, #rodovia, #data, #pageable.pageNumber}",
             unless = "#result == null || #result.isEmpty()",
             condition = "#placa != null && #placa.length() >= 3"
     )
@@ -81,10 +82,6 @@ public class RadarsService {
             LocalTime horaFinal, Pageable pageable) {
 
         log.debug("🔍 Buscando com filtros - Placa: {}, Rodovia: {}", placa, rodovia);
-
-        LocalDate dataLimite = LocalDate.now().minusDays(DIAS_HISTORICO);
-        int limit = pageable.getPageSize();
-        int offset = pageable.getPageNumber() * pageable.getPageSize();
 
         Page<Radars> resultado = radarsRepository.findComFiltrosOtimizado(
                 normalize(placa),
@@ -118,10 +115,9 @@ public class RadarsService {
             throw new IllegalArgumentException("Placa deve ter no mínimo 3 caracteres");
         }
 
-        LocalDate dataLimite = LocalDate.now().minusDays(DIAS_HISTORICO);
+        // Agora chama o método que busca em TODO o histórico (sem limite de 90 dias)
         Page<Radars> resultado = radarsRepository.findByPlacaOtimizado(
-                placa.trim(),
-                dataLimite,
+                normalize(placa),
                 pageable
         );
 
