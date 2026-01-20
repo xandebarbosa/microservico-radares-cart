@@ -58,14 +58,14 @@ ANALYZE localizacao_radar;
 CREATE OR REPLACE VIEW v_indices_nao_utilizados AS
 SELECT
     schemaname,
-    tablename,
-    indexname,
+    relname AS tablename,       -- A coluna correta é 'relname'
+    indexrelname AS indexname,  -- A coluna correta é 'indexrelname'
     idx_scan,
     pg_size_pretty(pg_relation_size(indexrelid)) AS index_size
 FROM pg_stat_user_indexes
 WHERE idx_scan = 0
 AND schemaname = 'public'
-AND tablename IN ('radars_cart', 'localizacao_radar')
+AND relname IN ('radars_cart', 'localizacao_radar') -- Filtro ajustado para 'relname'
 ORDER BY pg_relation_size(indexrelid) DESC;
 
 -- 8. MONITORAMENTO DE PERFORMANCE DE QUERIES

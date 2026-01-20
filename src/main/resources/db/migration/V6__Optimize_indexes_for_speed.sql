@@ -27,14 +27,12 @@ ON radars_cart (localizacao_id) WHERE localizacao_id IS NOT NULL;
 -- 5. ÍNDICE parcial para buscas recentes (últimos 30 dias)
 -- 90% das buscas são de dados recentes
 CREATE INDEX IF NOT EXISTS idx_recentes
-ON radars_cart (data DESC, hora DESC, placa)
-WHERE data >= CURRENT_DATE - INTERVAL '30 days';
+ON radars_cart (data DESC, hora DESC, placa);
 
 -- 6. ÍNDICE composto para a query de filtros do BFF
 -- Ordem otimizada baseada em cardinalidade
 CREATE INDEX IF NOT EXISTS idx_filtros_completos
-ON radars_cart (data, placa, rodovia, km)
-WHERE data >= CURRENT_DATE - INTERVAL '90 days';
+ON radars_cart (data, placa, rodovia, km);
 
 -- 7. ESTATÍSTICAS atualizadas (crítico!)
 ANALYZE radars_cart;

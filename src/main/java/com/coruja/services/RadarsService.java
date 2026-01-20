@@ -95,8 +95,6 @@ public class RadarsService {
                 data,
                 horaInicial,
                 horaFinal,
-                limit,
-                offset,
                 pageable
         );
 

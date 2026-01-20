@@ -18,70 +18,6 @@ import java.util.List;
 @Repository
 public interface RadarsRepository extends JpaRepository<Radars, Long>, JpaSpecificationExecutor<Radars> {
 
-    // O Spring cria automaticamente: SELECT * FROM radars WHERE placa LIKE %?%
-    Page<Radars> findByPlacaContaining(String placa, Pageable pageable);
-
-    // E aqui também, ele cria a query com AND para todos os campos:
-    // SELECT * FROM radars WHERE rodovia = ? AND km = ? AND sentido = ?
-    Page<Radars> findByRodoviaAndKmAndSentido(String rodovia, String km, String sentido, Pageable pageable);
-
-    @Query(value = "SELECT DISTINCT rodovia FROM radars_cart WHERE rodovia IS NOT NULL AND rodovia <> '' ORDER BY rodovia", nativeQuery = true)
-    List<String> findDistinctRodoviasNative();
-
-    @Query(value = "SELECT DISTINCT praca FROM radars_cart WHERE praca IS NOT NULL AND praca <> '' ORDER BY praca", nativeQuery = true)
-    List<String> findDistinctPracasNative();
-
-    @Query(value = "SELECT DISTINCT km FROM radars_cart WHERE km IS NOT NULL AND km <> '' ORDER BY km", nativeQuery = true)
-    List<String> findDistinctKmsNative();
-
-    @Query(value = "SELECT DISTINCT sentido FROM radars_cart WHERE sentido IS NOT NULL AND sentido <> '' ORDER BY sentido", nativeQuery = true)
-    List<String> findDistinctSentidosNative();
-
-    @Query(value = "SELECT DISTINCT km FROM radars_cart WHERE rodovia = ?1 AND km IS NOT NULL AND km <> '' ORDER BY km", nativeQuery = true)
-    List<String> findDistinctKmsByRodoviaNative(String rodovia);
-
-    /**
-     * Busca radares dentro de um raio (em metros) de uma coordenada, filtrando por data e hora.
-     * Usa PostGIS para alta performance.
-     * * Usa DISTINCT ON para remover duplicatas de Placa/Data/Hora.
-     */
-    @Query(value = """
-        SELECT DISTINCT ON (r.data, r.hora, r.placa) r.* FROM radars_cart r
-        JOIN localizacao_radar l ON r.localizacao_id = l.id
-        WHERE r.data = :data
-        AND r.hora BETWEEN :horaInicio AND :horaFim
-        AND ST_DWithin(
-            l.localizacao::geography,
-            ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326)::geography,
-            :raio
-        )
-        ORDER BY r.data, r.hora, r.placa
-        """,
-
-            countQuery = """
-        SELECT count(DISTINCT (r.data, r.hora, r.placa))
-        FROM radars_cart r
-        JOIN localizacao_radar l ON r.localizacao_id = l.id
-        WHERE r.data = :data
-        AND r.hora BETWEEN :horaInicio AND :horaFim
-        AND ST_DWithin(
-            l.localizacao::geography,
-            ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326)::geography,
-            :raio
-        )
-        """,
-            nativeQuery = true)
-    Page<Radars> findByGeolocalizacao(
-            @Param("latitude") Double latitude,
-            @Param("longitude") Double longitude,
-            @Param("raio") Double raio,
-            @Param("data") LocalDate data,
-            @Param("horaInicio") LocalTime horaInicio,
-            @Param("horaFim") LocalTime horafim,
-            Pageable pageable
-    );
-
-    //**************************************************************************
     /**
      * ✅ BUSCA OTIMIZADA POR PLACA
      * Usa índice GIN (pg_trgm) para LIKE ultrarrápido
@@ -103,11 +39,11 @@ public interface RadarsRepository extends JpaRepository<Radars, Long>, JpaSpecif
 
     /**
      * ✅ BUSCA COM FILTROS COMBINADOS
-     * Query nativa para máxima performance
+     * Query nativa para máxima performance.
+     * REMOVIDO: LIMIT e OFFSET manuais (o Pageable gerencia isso automaticamente).
      */
     @Query(value = """
-        SELECT DISTINCT ON (r.data, r.hora, r.placa) r.* 
-        FROM radars_cart r
+        SELECT DISTINCT ON (r.data, r.hora, r.placa) r.* FROM radars_cart r
         WHERE 1=1
         AND (:placa IS NULL OR UPPER(r.placa) LIKE UPPER(CONCAT('%', CAST(:placa AS TEXT), '%')))
         AND (:praca IS NULL OR UPPER(r.praca) LIKE UPPER(CONCAT('%', CAST(:praca AS TEXT), '%')))
@@ -119,7 +55,6 @@ public interface RadarsRepository extends JpaRepository<Radars, Long>, JpaSpecif
         AND (:horaFinal IS NULL OR r.hora <= :horaFinal)
         AND r.data >= CURRENT_DATE - INTERVAL '90 days'
         ORDER BY r.data DESC, r.hora DESC, r.placa
-        LIMIT :limit OFFSET :offset
         """,
             countQuery = """
         SELECT COUNT(DISTINCT (r.data, r.hora, r.placa))
@@ -146,8 +81,6 @@ public interface RadarsRepository extends JpaRepository<Radars, Long>, JpaSpecif
             @Param("data") LocalDate data,
             @Param("horaInicial") LocalTime horaInicial,
             @Param("horaFinal") LocalTime horaFinal,
-            @Param("limit") int limit,
-            @Param("offset") int offset,
             Pageable pageable
     );
 
@@ -193,8 +126,7 @@ public interface RadarsRepository extends JpaRepository<Radars, Long>, JpaSpecif
      * ✅ BUSCA GEOESPACIAL OTIMIZADA
      */
     @Query(value = """
-        SELECT DISTINCT ON (r.data, r.hora, r.placa) r.* 
-        FROM radars_cart r
+        SELECT DISTINCT ON (r.data, r.hora, r.placa) r.* FROM radars_cart r
         INNER JOIN localizacao_radar l ON r.localizacao_id = l.id
         WHERE r.data = :data
         AND r.hora BETWEEN :horaInicio AND :horaFim
