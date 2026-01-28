@@ -1,9 +1,8 @@
 package com.coruja.services;
 
-import com.coruja.dto.FilterOptionsDTO;
-import com.coruja.dto.LocalizacaoRadarProjection;
-import com.coruja.dto.RadarsDTO;
+import com.coruja.dto.*;
 import com.coruja.entities.Radars;
+import com.coruja.enums.Sentido;
 import com.coruja.repositories.LocalizacaoRadarRepository;
 import com.coruja.repositories.RadarsRepository;
 import com.coruja.specifications.RadarsSpecification;
@@ -31,6 +30,7 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.stream.Collectors;
 
 @Service
 @Slf4j
@@ -57,72 +57,55 @@ public class RadarsService {
         this.localizacaoRadarRepository = localizacaoRadarRepository;
     }
 
-    @PostConstruct
-    public void init() {
-        log.info("🚀 Inicializando cache de filtros...");
-        CompletableFuture.runAsync(this::atualizarCacheFiltros, executorService);
+    /**
+     * Busca por PLACA: Retorna histórico completo
+     */
+    @Transactional(readOnly = true)
+    //@Cacheable(value = "busca-placa", key = "#placa + '-' + #pageable.pageNumber")
+    public Page<RadarsDTO> buscarPorPlaca(String placa, Pageable pageable) {
+        return radarsRepository.findAllByPlaca(normalize(placa), pageable)
+                .map(this::converterParaDTO);
     }
 
     /**
-     * ✅ BUSCA OTIMIZADA COM CACHE INTELIGENTE
-     * TTL: 5 minutos para buscas genéricas, 1 hora para específicas
+     * Busca por LOCAL: Filtros pré-definidos
      */
     @Transactional(readOnly = true)
-    @Cacheable(
-            value = "radars-search",
-            // Cache key otimizada
-            key = "{#placa, #rodovia, #data, #pageable.pageNumber}",
-            unless = "#result == null || #result.isEmpty()",
-            condition = "#placa != null && #placa.length() >= 3"
-    )
-    @Timed(value = "radares.busca.filtros", histogram = true)
-    public Page<RadarsDTO> buscarComFiltros(
-            String placa, String praca, String rodovia, String km,
-            String sentido, LocalDate data, LocalTime horaInicial,
-            LocalTime horaFinal, Pageable pageable) {
+    // Cache mais curto aqui pois dados do dia mudam ou parâmetros variam muito
+    //@Cacheable(value = "busca-local", key = "{#data, #rodovia, #km, #pageable.pageNumber}", unless = "#result.isEmpty()")
+    public RadarPageDTO buscarPorLocal(
+            LocalDate data,
+            LocalTime horaInicial,
+            LocalTime horaFinal,
+            String rodovia,
+            String praca,
+            String km,
+            String sentido,
+            Pageable pageable) {
 
-        log.debug("🔍 Buscando com filtros - Placa: {}, Rodovia: {}", placa, rodovia);
+        // Normalização de Strings (Trim + Null Check)
+        String filtroRodovia = normalize(rodovia);
+        String filtroKm = normalize(km);
+        String filtroSentido = normalize(sentido);
+        String filtroPraca = normalize(praca);
 
-        Page<Radars> resultado = radarsRepository.findComFiltrosOtimizado(
-                normalize(placa),
-                normalize(praca),
-                normalize(rodovia),
-                normalize(km),
-                normalize(sentido),
-                data,
+        Page<Radars> page = radarsRepository.findByLocalFilter(
+                data, // placa (não usamos na busca por local)
                 horaInicial,
                 horaFinal,
+                null,
+                filtroPraca,
+                filtroRodovia,
+                filtroKm,
+                filtroSentido, // Passa o sentido tratado
                 pageable
+
         );
 
-        log.debug("✅ Encontrados {} registros", resultado.getTotalElements());
-        return resultado.map(this::converterParaDTO);
+        return convertToPageDTO(page);
     }
 
-    /**
-     * ✅ BUSCA ESPECÍFICA POR PLACA (MAIS RÁPIDA)
-     */
-    @Transactional(readOnly = true)
-    @Cacheable(
-            value = "radars-placa",
-            key = "#placa + '_' + #pageable.pageNumber",
-            unless = "#result == null || #result.isEmpty()",
-            condition = "#placa != null && #placa.length() >= 3"
-    )
-    @Timed(value = "radares.busca.placa", histogram = true)
-    public Page<RadarsDTO> buscarPorPlaca(String placa, Pageable pageable) {
-        if (placa == null || placa.length() < 3) {
-            throw new IllegalArgumentException("Placa deve ter no mínimo 3 caracteres");
-        }
 
-        // Agora chama o método que busca em TODO o histórico (sem limite de 90 dias)
-        Page<Radars> resultado = radarsRepository.findByPlacaOtimizado(
-                normalize(placa),
-                pageable
-        );
-
-        return resultado.map(this::converterParaDTO);
-    }
 
     /**
      * ✅ BUSCA GEOESPACIAL OTIMIZADA
@@ -147,39 +130,7 @@ public class RadarsService {
         return resultado.map(this::converterParaDTO);
     }
 
-    /**
-     * ✅ FILTROS METADATA - Cache de 2 horas
-     */
-    @Cacheable(
-            value = "opcoes-filtro-cart",
-            unless = "#result == null || #result.rodovias.isEmpty()"
-    )
-    @Transactional(readOnly = true)
-    public FilterOptionsDTO getFilterOptions() {
-        log.info("📋 Buscando opções de filtro (Cache Miss)");
 
-        return FilterOptionsDTO.builder()
-                .rodovias(orEmpty(radarsRepository.findDistinctRodoviasOtimizado()))
-                .pracas(orEmpty(radarsRepository.findDistinctPracasOtimizado()))
-                .sentidos(orEmpty(radarsRepository.findDistinctSentidosOtimizado()))
-                .build();
-    }
-
-    /**
-     * ✅ KMS POR RODOVIA - Cache de 30 minutos
-     */
-    @Cacheable(
-            value = "kms-rodovia-cart",
-            key = "#rodovia",
-            unless = "#result == null || #result.isEmpty()"
-    )
-    @Transactional(readOnly = true)
-    public List<String> getKmsForRodovia(String rodovia) {
-        if (rodovia == null || rodovia.isBlank()) {
-            return new ArrayList<>();
-        }
-        return orEmpty(radarsRepository.findDistinctKmsByRodoviaOtimizado(rodovia));
-    }
 
     /**
      * ✅ LOCALIZAÇÕES PARA MAPA - Cache de 24 horas
@@ -224,16 +175,7 @@ public class RadarsService {
         log.info("🧹 Limpeza diária de cache executada");
     }
 
-    /**
-     * ✅ ATUALIZAÇÃO DE CACHE DE FILTROS
-     * Roda às 4:00 AM todos os dias
-     */
-    @Scheduled(cron = "0 0 4 * * *")
-    public FilterOptionsDTO atualizarCacheFiltros() {
-        log.info("🔄 Atualizando cache de filtros...");
-        limparCachesRelacionados();
-        return getFilterOptions();
-    }
+
 
     // ==================== MÉTODOS AUXILIARES ====================
 
@@ -279,6 +221,44 @@ public class RadarsService {
         return (input != null) ? input.trim().toUpperCase() : null;
     }
 
+    /**
+     * Converte Page<Entity> para RadarPageDTO (Estrutura paginada para JSON)
+     */
+    private RadarPageDTO convertToPageDTO(Page<Radars> page) {
+        List<RadarsDTO> content = page.getContent().stream()
+                .map(this::converterParaDTOBuscaLocal) // ✅ Reutiliza o conversor centralizado
+                .collect(Collectors.toList());
+
+        PageMetadata metadata = new PageMetadata(
+                page.getNumber(),
+                page.getSize(),
+                page.getTotalElements(),
+                page.getTotalPages()
+        );
+
+        return new RadarPageDTO(content, metadata);
+    }
+
+    private RadarsDTO converterParaDTOBuscaLocal(Radars radars) {
+        RadarsDTO dto = new RadarsDTO();
+        dto.setId(radars.getId());
+        dto.setData(radars.getData());
+        dto.setHora(radars.getHora());
+        dto.setPlaca(radars.getPlaca());
+        dto.setPraca(radars.getPraca());
+        dto.setRodovia(radars.getRodovia());
+        dto.setKm(radars.getKm());
+
+        // Conversão Segura de String -> Enum
+        try {
+            dto.setSentido(Sentido.fromString(radars.getSentido()));
+        } catch (Exception e) {
+            dto.setSentido(Sentido.NAO_IDENTIFICADO);
+        }
+
+        return dto;
+    }
+
     private RadarsDTO converterParaDTO(Radars radars) {
         return RadarsDTO.builder()
                 .id(radars.getId())
@@ -288,7 +268,7 @@ public class RadarsService {
                 .praca(radars.getPraca())
                 .rodovia(radars.getRodovia())
                 .km(radars.getKm())
-                .sentido(radars.getSentido())
+                .sentido(Sentido.fromString(radars.getSentido()))
                 .build();
     }
 }

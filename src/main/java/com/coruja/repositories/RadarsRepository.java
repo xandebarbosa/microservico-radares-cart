@@ -19,110 +19,66 @@ import java.util.List;
 public interface RadarsRepository extends JpaRepository<Radars, Long>, JpaSpecificationExecutor<Radars> {
 
     /**
-     * ✅ BUSCA OTIMIZADA POR PLACA
-     * Usa índice GIN (pg_trgm) para LIKE ultrarrápido
-     * FETCH JOIN elimina N+1 problem
+     * ✅ BUSCA OTIMIZADA POR PLACA (REFATORADO)
+     * Mudado para Native Query para garantir uso do índice GIN (pg_trgm) e evitar erro de mapeamento.
      */
     @Query(value = """
-        SELECT r FROM Radars r 
-        LEFT JOIN FETCH r.localizacao 
+        SELECT DISTINCT ON (r.data, r.hora, r.placa) r.* FROM radars_cart r
         WHERE r.placa ILIKE CONCAT('%', :placa, '%')
         ORDER BY r.data DESC, r.hora DESC
         """,
             countQuery = """
-        SELECT COUNT(r) FROM Radars r 
+        SELECT COUNT(DISTINCT (r.data, r.hora, r.placa))
         WHERE r.placa ILIKE CONCAT('%', :placa, '%')
-        """)
+        """, nativeQuery = true)
     @QueryHints(@QueryHint(name = "org.hibernate.readOnly", value = "true"))
-    Page<Radars> findByPlacaOtimizado(
-            @Param("placa") String placa,
-            Pageable pageable
-    );
+    Page<Radars> findAllByPlaca(@Param("placa") String placa, Pageable pageable);
 
+    // 2. BUSCA POR LOCAL (Filtros Específicos: Data, Hora, Rodovia, Km, Sentido)
+    // Otimização: Query Nativa para evitar overhead do Hibernate em projeções complexas
     /**
      * ✅ BUSCA COM FILTROS COMBINADOS
-     * Query nativa para máxima performance.
-     * REMOVIDO: LIMIT e OFFSET manuais (o Pageable gerencia isso automaticamente).
      */
     @Query(value = """
         SELECT DISTINCT ON (r.data, r.hora, r.placa) r.* FROM radars_cart r
         WHERE 1=1
-        AND (CAST(:placa AS TEXT) IS NULL OR UPPER(r.placa) LIKE UPPER(CONCAT('%', CAST(:placa AS TEXT), '%')))
-        AND (CAST(:praca AS TEXT) IS NULL OR UPPER(r.praca) LIKE UPPER(CONCAT('%', CAST(:praca AS TEXT), '%')))
-        AND (CAST(:rodovia AS TEXT) IS NULL OR r.rodovia = CAST(:rodovia AS TEXT))
+        AND (CAST(:placa AS TEXT) IS NULL OR r.placa ILIKE CONCAT('%', CAST(:placa AS TEXT), '%'))
+        AND (CAST(:praca AS TEXT) IS NULL OR r.praca ILIKE CONCAT('%', CAST(:praca AS TEXT), '%'))
+        AND (CAST(:rodovia AS TEXT) IS NULL OR r.rodovia ILIKE CONCAT('%', CAST(:rodovia AS TEXT), '%'))
         AND (CAST(:km AS TEXT) IS NULL OR r.km = CAST(:km AS TEXT))
         AND (CAST(:sentido AS TEXT) IS NULL OR r.sentido = CAST(:sentido AS TEXT))
         AND (CAST(:data AS DATE) IS NULL OR r.data = CAST(:data AS DATE))
         AND (CAST(:horaInicial AS TIME) IS NULL OR r.hora >= CAST(:horaInicial AS TIME))
         AND (CAST(:horaFinal AS TIME) IS NULL OR r.hora <= CAST(:horaFinal AS TIME))
-        AND r.data >= CURRENT_DATE - INTERVAL '90 days'
         ORDER BY r.data DESC, r.hora DESC, r.placa
         """,
             countQuery = """
         SELECT COUNT(DISTINCT (r.data, r.hora, r.placa))
         FROM radars_cart r
         WHERE 1=1
-        AND (CAST(:placa AS TEXT) IS NULL OR UPPER(r.placa) LIKE UPPER(CONCAT('%', CAST(:placa AS TEXT), '%')))
-        AND (CAST(:praca AS TEXT) IS NULL OR UPPER(r.praca) LIKE UPPER(CONCAT('%', CAST(:praca AS TEXT), '%')))
-        AND (CAST(:rodovia AS TEXT) IS NULL OR r.rodovia = CAST(:rodovia AS TEXT))
+        AND (CAST(:placa AS TEXT) IS NULL OR r.placa ILIKE CONCAT('%', CAST(:placa AS TEXT), '%'))
+        AND (CAST(:praca AS TEXT) IS NULL OR r.praca ILIKE CONCAT('%', CAST(:praca AS TEXT), '%'))
+        AND (CAST(:rodovia AS TEXT) IS NULL OR r.rodovia ILIKE CONCAT('%', CAST(:rodovia AS TEXT), '%'))
         AND (CAST(:km AS TEXT) IS NULL OR r.km = CAST(:km AS TEXT))
         AND (CAST(:sentido AS TEXT) IS NULL OR r.sentido = CAST(:sentido AS TEXT))
         AND (CAST(:data AS DATE) IS NULL OR r.data = CAST(:data AS DATE))
         AND (CAST(:horaInicial AS TIME) IS NULL OR r.hora >= CAST(:horaInicial AS TIME))
         AND (CAST(:horaFinal AS TIME) IS NULL OR r.hora <= CAST(:horaFinal AS TIME))
-        AND r.data >= CURRENT_DATE - INTERVAL '90 days'
         """,
             nativeQuery = true
     )
-    Page<Radars> findComFiltrosOtimizado(
-            @Param("placa") String placa,
-            @Param("praca") String praca,
-            @Param("rodovia") String rodovia,
-            @Param("km") String km,
-            @Param("sentido") String sentido,
+    @QueryHints(@QueryHint(name = "org.hibernate.readOnly", value = "true"))
+    Page<Radars> findByLocalFilter(
             @Param("data") LocalDate data,
             @Param("horaInicial") LocalTime horaInicial,
             @Param("horaFinal") LocalTime horaFinal,
+            @Param("placa") String placa,
+            @Param("rodovia") String rodovia,
+            @Param("praca") String praca,
+            @Param("km") String km,
+            @Param("sentido") String sentido,
             Pageable pageable
     );
-
-    /**
-     * ✅ METADATA DE FILTROS - Query otimizada com CTE
-     */
-    @Query(value = """
-        WITH dados_recentes AS (
-            SELECT rodovia, praca, km, sentido
-            FROM radars_cart
-            WHERE data >= CURRENT_DATE - INTERVAL '30 days'
-        )
-        SELECT DISTINCT rodovia FROM dados_recentes WHERE rodovia IS NOT NULL ORDER BY rodovia
-        """, nativeQuery = true)
-    List<String> findDistinctRodoviasOtimizado();
-
-    @Query(value = """
-        SELECT DISTINCT praca FROM radars_cart
-        WHERE data >= CURRENT_DATE - INTERVAL '30 days'
-        AND praca IS NOT NULL
-        ORDER BY praca
-        """, nativeQuery = true)
-    List<String> findDistinctPracasOtimizado();
-
-    @Query(value = """
-        SELECT DISTINCT km FROM radars_cart
-        WHERE rodovia = :rodovia
-        AND data >= CURRENT_DATE - INTERVAL '30 days'
-        AND km IS NOT NULL
-        ORDER BY CAST(REGEXP_REPLACE(km, '[^0-9.]', '', 'g') AS NUMERIC)
-        """, nativeQuery = true)
-    List<String> findDistinctKmsByRodoviaOtimizado(@Param("rodovia") String rodovia);
-
-    @Query(value = """
-        SELECT DISTINCT sentido FROM radars_cart
-        WHERE data >= CURRENT_DATE - INTERVAL '30 days'
-        AND sentido IS NOT NULL
-        ORDER BY sentido
-        """, nativeQuery = true)
-    List<String> findDistinctSentidosOtimizado();
 
     /**
      * ✅ BUSCA GEOESPACIAL OTIMIZADA
@@ -162,5 +118,43 @@ public interface RadarsRepository extends JpaRepository<Radars, Long>, JpaSpecif
             @Param("horaFim") LocalTime horaFim,
             Pageable pageable
     );
+
+    /**
+     * ✅ METADATA DE FILTROS
+     */
+    @Query(value = """
+        WITH dados_recentes AS (
+            SELECT rodovia, praca, km, sentido
+            FROM radars_cart
+            WHERE data >= CURRENT_DATE - INTERVAL '30 days'
+        )
+        SELECT DISTINCT rodovia FROM dados_recentes WHERE rodovia IS NOT NULL ORDER BY rodovia
+        """, nativeQuery = true)
+    List<String> findDistinctRodoviasOtimizado();
+
+    @Query(value = """
+        SELECT DISTINCT praca FROM radars_cart
+        WHERE data >= CURRENT_DATE - INTERVAL '30 days'
+        AND praca IS NOT NULL
+        ORDER BY praca
+        """, nativeQuery = true)
+    List<String> findDistinctPracasOtimizado();
+
+    @Query(value = """
+        SELECT DISTINCT km FROM radars_cart
+        WHERE rodovia = :rodovia
+        AND data >= CURRENT_DATE - INTERVAL '30 days'
+        AND km IS NOT NULL
+        ORDER BY CAST(REGEXP_REPLACE(km, '[^0-9.]', '', 'g') AS NUMERIC)
+        """, nativeQuery = true)
+    List<String> findDistinctKmsByRodoviaOtimizado(@Param("rodovia") String rodovia);
+
+    @Query(value = """
+        SELECT DISTINCT sentido FROM radars_cart
+        WHERE data >= CURRENT_DATE - INTERVAL '30 days'
+        AND sentido IS NOT NULL
+        ORDER BY sentido
+        """, nativeQuery = true)
+    List<String> findDistinctSentidosOtimizado();
     
 }

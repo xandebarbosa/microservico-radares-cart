@@ -1,6 +1,7 @@
 package com.coruja.dto;
 
 import com.coruja.entities.Radars;
+import com.coruja.enums.Sentido;
 import lombok.*;
 import org.springframework.beans.BeanUtils;
 
@@ -21,5 +22,5 @@ public class RadarsDTO {
     private String praca;
     private String rodovia;
     private String km;
-    private String sentido;
+    private Sentido sentido;
 }

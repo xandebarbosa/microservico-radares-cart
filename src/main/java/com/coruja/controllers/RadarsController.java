@@ -2,13 +2,20 @@ package com.coruja.controllers;
 
 import com.coruja.dto.FilterOptionsDTO;
 import com.coruja.dto.LocalizacaoRadarProjection;
+import com.coruja.dto.RadarPageDTO;
 import com.coruja.dto.RadarsDTO;
+import com.coruja.entities.KmRodovia;
+import com.coruja.entities.Rodovia;
 import com.coruja.repositories.RadarsRepository;
+import com.coruja.services.GestaoRodoviaService;
 import com.coruja.services.RadarsService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
@@ -22,59 +29,58 @@ import java.util.List;
 @CrossOrigin(origins = "${cors.origins}")
 @RestController
 @RequestMapping(value = "/radares")
+@RequiredArgsConstructor
+@Slf4j
 public class RadarsController {
 
     private final RadarsService radarsService;
+    private final GestaoRodoviaService gestaoRodoviaService;
 
-    // Injeção de dependência via construtor é a melhor prática
-    public RadarsController(RadarsService radarsService) {
-
-        this.radarsService = radarsService;
+    /**
+     * ✅ BUSCA POR PLACA
+     * Endpoint específico e otimizado para histórico completo de uma placa.
+     */
+    @GetMapping("/busca-placa")
+    public ResponseEntity<Page<RadarsDTO>> buscarPorPlaca(
+            @RequestParam String placa,
+            @PageableDefault(page = 0, size = 20, sort = "data", direction = Sort.Direction.DESC) Pageable pageable
+    ) {
+        return ResponseEntity.ok(radarsService.buscarPorPlaca(placa, pageable));
     }
 
     /**
-     * Endpoint UNIFICADO para buscar radares com filtros opcionais.
-     * O BFF usará este endpoint para todas as suas consultas.
-     * Exemplo de uso pelo BFF: /radares/filtros?placa=ABC1234&page=0&size=20
-     * Exemplo 2: /radares/filtros?rodovia=SP-300&data=2025-06-06&page=0&size=20
-     * Se nenhum parâmetro for passado, ele retorna todos os radares paginados.
+     * ✅ BUSCA POR LOCAL (FILTROS)
+     * Endpoint para consulta operacional (Dia, Rodovia, Km, Hora).
+     * 'Data' é obrigatória para performance (cai na partição correta).
      */
-    @GetMapping("/filtros")
-    public ResponseEntity<Page<RadarsDTO>> buscarComFiltros(
-            @RequestParam(required = false) String placa,
-            @RequestParam(required = false) String praca,
-            @RequestParam(required = false) String rodovia,
-            @RequestParam(required = false) String km,
-            @RequestParam(required = false) String sentido,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate data,
+    @GetMapping("/busca-local")
+    public ResponseEntity<RadarPageDTO> buscarPorLocal(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate data,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.TIME) LocalTime horaInicial,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.TIME) LocalTime horaFinal,
-            // @PageableDefault define o padrão caso o BFF não envie nada (ex: page 0, size 20)
-            @PageableDefault(page = 0, size = 20) Pageable pageable
+
+            @RequestParam(required = false) String rodovia,
+            @RequestParam(required = false) String praca,
+            @RequestParam(required = false) String km,
+            @RequestParam(required = false) String sentido,
+
+            // Paginação Padrão
+            @PageableDefault(size = 20, sort = {"data", "hora"}, direction = Sort.Direction.DESC) Pageable pageable
     ) {
-        Page<RadarsDTO> resultado = radarsService.buscarComFiltros(
-                placa, praca,rodovia, km, sentido, data, horaInicial, horaFinal, pageable
+        // Log para debug (verifique se o sentido aparece aqui no console)
+        log.info("🔍 [Cart Controller] Buscando Local | Data: {} | Rodovia: {} | Sentido: {}", data, rodovia, sentido);
+        RadarPageDTO resultado = radarsService.buscarPorLocal(
+                data,
+                horaInicial,
+                horaFinal,
+                rodovia,
+                km,
+                sentido,
+                praca,
+                pageable
         );
-        return  ResponseEntity.ok(resultado);
-    }
 
-    // O endpoint GET / que retorna TODOS os dados pode ser removido, pois
-    // chamar /filtros sem parâmetros tem o mesmo efeito. Vamos mantê-lo por compatibilidade.
-    @GetMapping
-    public ResponseEntity<Page<RadarsDTO>> getAllRadars(Pageable pageable) {
-        // Reutilizamos a nova lógica para manter o código DRY (Don't Repeat Yourself)
-        Page<RadarsDTO> result = radarsService.buscarComFiltros(null, null, null, null, null, null, null, null,pageable);
-        return ResponseEntity.ok(result);
-    }
-
-    @GetMapping("/opcoes-filtro")
-    public ResponseEntity<FilterOptionsDTO> getFiltersOptions() {
-        return ResponseEntity.ok(radarsService.getFilterOptions());
-    }
-
-    @GetMapping("/kms-por-rodovia")
-    public ResponseEntity<List<String>> getKmsByRodovia(@RequestParam String rodovia) {
-        return ResponseEntity.ok(radarsService.getKmsForRodovia(rodovia));
+        return ResponseEntity.ok(resultado);
     }
 
     /**
@@ -103,6 +109,46 @@ public class RadarsController {
         );
         return ResponseEntity.ok(resultado);
     }
+
+    // ==================================================================================
+    // 2. GESTÃO DE DOMÍNIOS (RODOVIAS E KMs) - NOVO
+    // ==================================================================================
+
+    @GetMapping("/rodovias")
+    public ResponseEntity<List<Rodovia>> listarRodovias() {
+        return ResponseEntity.ok(gestaoRodoviaService.listarRodovias());
+    }
+
+    @PostMapping("/rodovias")
+    public ResponseEntity<Rodovia> adicionarRodovia(@RequestBody Rodovia rodovia) {
+        return ResponseEntity.ok(gestaoRodoviaService.salvarRodovia(rodovia));
+    }
+
+    @DeleteMapping("/rodovias/{id}")
+    public ResponseEntity<Void> removerRodovia(@PathVariable Long id) {
+        gestaoRodoviaService.deletarRodovia(id);
+        return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/rodovias/{rodoviaId}/kms")
+    public ResponseEntity<List<KmRodovia>> listarKmsDaRodovia(@PathVariable Long rodoviaId) {
+        return ResponseEntity.ok(gestaoRodoviaService.listarKmsPorRodovia(rodoviaId));
+    }
+
+    @PostMapping("/kms")
+    public ResponseEntity<KmRodovia> adicionarKm(@RequestBody KmRodovia km) {
+        return ResponseEntity.ok(gestaoRodoviaService.salvarKm(km));
+    }
+
+    @DeleteMapping("/kms/{id}")
+    public ResponseEntity<Void> removerKm(@PathVariable Long id) {
+        gestaoRodoviaService.deletarKm(id);
+        return ResponseEntity.noContent().build();
+    }
+
+    // ==================================================================================
+    // 3. COMPATIBILIDADE / LEGADO (MAPA)
+    // ==================================================================================
 
     @GetMapping("/all-locations")
     public ResponseEntity<List<LocalizacaoRadarProjection>> getRadarLocations() {

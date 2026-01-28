@@ -65,6 +65,7 @@ public class FtpService {
 
     private final RadarsService radarsService;
     private final LocalizacaoRadarRepository localizacaoRepository;
+    private final GestaoRodoviaService gestaoRodoviaService;
 
     private final GeometryFactory geometryFactory = new GeometryFactory(new PrecisionModel(), 4326);
 
@@ -74,9 +75,10 @@ public class FtpService {
             "^(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(.+?)\\s+(SP\\S+)\\s+(KM\\S+)$"
     );
 
-    public FtpService(RadarsService radarsService, LocalizacaoRadarRepository localizacaoRepository) {
+    public FtpService(RadarsService radarsService, LocalizacaoRadarRepository localizacaoRepository, GestaoRodoviaService gestaoRodoviaService) {
         this.radarsService = radarsService;
         this.localizacaoRepository = localizacaoRepository;
+        this.gestaoRodoviaService = gestaoRodoviaService;
     }
 
     // AJUSTE: A anotação @Scheduled agora lê o valor do application.properties
@@ -124,20 +126,32 @@ public class FtpService {
             // Isso evita o erro de conexão do banco por excesso de consultas
             Map<String, LocalizacaoRadar> mapaLocalizacao = carregarMapaLocalizacao();
 
+            // Mapa para acumular descobertas: Rodovia -> Set de KMs únicos
+            // Usamos Set para remover duplicatas automaticamente (ex: km 100 aparece 50 vezes)
+            Map<String, Set<String>> descobertasDoLote = new HashMap<>();
+
             List<Radars> todosOsRadares = new ArrayList<>();
 
             for (String nomeArquivo : novosArquivos) {
                 baixarArquivo(ftpClient, nomeArquivo, localPath).ifPresent(arquivoLocal -> {
                     logger.info("Processando arquivo: {}", nomeArquivo);
                     // Passa o mapa carregado para o método de processamento
-                    todosOsRadares.addAll(processarArquivo(arquivoLocal, mapaLocalizacao));
+                    todosOsRadares.addAll(processarArquivo(arquivoLocal, mapaLocalizacao, descobertasDoLote));
                 });
             }
 
+            // 1. Salva os Radares (Fluxo normal)
             if (!todosOsRadares.isEmpty()) {
                 logger.info("Salvando {} novos registros de radares no banco de dados.", todosOsRadares.size());
                 radarsService.saveRadars(todosOsRadares);
                 logger.info("Banco de dados atualizado com sucesso.");
+            } else {
+                logger.info("Nenhum registro válido encontrado nos novos arquivos.");
+            }
+
+            // 2. Salva as Descobertas de Domínio (Fluxo Novo)
+            if (!descobertasDoLote.isEmpty()) {
+                gestaoRodoviaService.registrarDescobertas(descobertasDoLote);
             } else {
                 logger.info("Nenhum registro válido encontrado nos novos arquivos.");
             }
@@ -233,11 +247,13 @@ public class FtpService {
     // =========================================================================
 
     // Método agora recebe o MAPA, evitando consultas ao banco dentro do loop
-    @Transactional // Transactional no nível do arquivo para performance de insert
-    public List<Radars> processarArquivo(Path arquivoLocal, Map<String, LocalizacaoRadar> mapaLocalizacao) {
+    @Transactional
+    public List<Radars> processarArquivo(Path arquivoLocal,
+                                         Map<String, LocalizacaoRadar> mapaLocalizacao,
+                                         Map<String, Set<String>> acumuladorDescobertas) { // <--- NOVO PARAMETRO
         try (Stream<String> lines = Files.lines(arquivoLocal, StandardCharsets.ISO_8859_1)) {
             return lines
-                    .map(linha -> parseLineWithRegex(linha, mapaLocalizacao)) // Passa o mapa
+                    .map(linha -> parseLineWithRegex(linha, mapaLocalizacao, acumuladorDescobertas)) // Passa adiante
                     .filter(Objects::nonNull)
                     .collect(Collectors.toList());
         } catch (IOException e) {
@@ -250,7 +266,7 @@ public class FtpService {
      * NOVO MÉTODO DE PARSING - A Correção do Bug
      * Usa uma Expressão Regular para extrair os dados de forma segura.
      */
-    private Radars parseLineWithRegex(String linha, Map<String, LocalizacaoRadar> mapaLocalizacao) {
+    private Radars parseLineWithRegex(String linha, Map<String, LocalizacaoRadar> mapaLocalizacao, Map<String, Set<String>> acumuladorDescobertas) {
         // Ignora linhas de cabeçalho, rodapé ou vazias
         if (linha.trim().isEmpty() || linha.contains("Data_Transação") || linha.startsWith("Changed database") || linha.matches("[-\\s]+") || linha.matches("\\(\\d+ rows affected\\)")) {
             return null;
@@ -289,6 +305,14 @@ public class FtpService {
             // BUSCA OTIMIZADA: Usa o Map em vez do Repository
             // Isso é 1000x mais rápido e não derruba a conexão
             LocalizacaoRadar localizacaoDoRadar = mapaLocalizacao.get(normalizeKey(praca));
+
+            // Adiciona ao acumulador. Se a rodovia não existe no mapa, cria.
+            // Se já existe, adiciona o km ao Set (que ignora duplicatas).
+            if (acumuladorDescobertas != null) {
+                acumuladorDescobertas
+                        .computeIfAbsent(rodovia, k -> new HashSet<>())
+                        .add(km);
+            }
 
             return new Radars(data, hora, placa, praca, rodovia, km, sentido, localizacaoDoRadar);
 

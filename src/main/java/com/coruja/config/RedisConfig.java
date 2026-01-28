@@ -27,13 +27,12 @@ public class RedisConfig {
     /**
      * ✅ CONFIGURAÇÃO OTIMIZADA DE SERIALIZAÇÃO
      */
-    @Bean
-    public ObjectMapper redisObjectMapper() {
+    public ObjectMapper createRedisObjectMapper() {
         ObjectMapper mapper = new ObjectMapper();
         mapper.registerModule(new JavaTimeModule());
         mapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
-        // Tipagem dinâmica para suporte a Page<>
+        // Tipagem dinâmica APENAS para o Redis (para serializar Page, etc)
         mapper.activateDefaultTyping(
                 mapper.getPolymorphicTypeValidator(),
                 ObjectMapper.DefaultTyping.NON_FINAL,
@@ -50,12 +49,15 @@ public class RedisConfig {
      * - Dados estáveis: 2-24 horas
      */
     @Bean
-    public RedisCacheConfiguration cacheConfiguration(ObjectMapper redisObjectMapper) {
+    public RedisCacheConfiguration cacheConfiguration() {
+        // Cria uma instância isolada do Mapper para o Redis
+        ObjectMapper redisMapper = createRedisObjectMapper();
+
         GenericJackson2JsonRedisSerializer serializer =
-                new GenericJackson2JsonRedisSerializer(redisObjectMapper);
+                new GenericJackson2JsonRedisSerializer(redisMapper);
 
         return RedisCacheConfiguration.defaultCacheConfig()
-                .entryTtl(Duration.ofMinutes(10)) // TTL padrão: 10 minutos
+                .entryTtl(Duration.ofMinutes(10))
                 .disableCachingNullValues()
                 .serializeKeysWith(
                         RedisSerializationContext.SerializationPair.fromSerializer(
