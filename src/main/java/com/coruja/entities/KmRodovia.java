@@ -1,5 +1,6 @@
 package com.coruja.entities;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -22,5 +23,7 @@ public class KmRodovia {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "rodovia_id", nullable = false)
+    @JsonIgnore // <--- ADICIONADO: Impede o erro de serialização do Proxy
+    @ToString.Exclude // <--- ADICIONADO: Evita loops no Lombok
     private Rodovia rodovia;
 }

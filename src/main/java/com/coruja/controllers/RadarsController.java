@@ -1,9 +1,6 @@
 package com.coruja.controllers;
 
-import com.coruja.dto.FilterOptionsDTO;
-import com.coruja.dto.LocalizacaoRadarProjection;
-import com.coruja.dto.RadarPageDTO;
-import com.coruja.dto.RadarsDTO;
+import com.coruja.dto.*;
 import com.coruja.entities.KmRodovia;
 import com.coruja.entities.Rodovia;
 import com.coruja.repositories.RadarsRepository;
@@ -131,7 +128,7 @@ public class RadarsController {
     }
 
     @GetMapping("/rodovias/{rodoviaId}/kms")
-    public ResponseEntity<List<KmRodovia>> listarKmsDaRodovia(@PathVariable Long rodoviaId) {
+    public ResponseEntity<List<KmRodoviaDTO>> listarKmsDaRodovia(@PathVariable Long rodoviaId) {
         return ResponseEntity.ok(gestaoRodoviaService.listarKmsPorRodovia(rodoviaId));
     }
 

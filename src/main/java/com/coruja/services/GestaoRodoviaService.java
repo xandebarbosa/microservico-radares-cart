@@ -1,5 +1,6 @@
 package com.coruja.services;
 
+import com.coruja.dto.KmRodoviaDTO;
 import com.coruja.entities.KmRodovia;
 import com.coruja.entities.Rodovia;
 import com.coruja.repositories.KmRodoviaRepository;
@@ -43,8 +44,13 @@ public class GestaoRodoviaService {
 
     // --- KMs ---
     @Cacheable(value = "lista-kms", key = "#rodoviaId")
-    public List<KmRodovia> listarKmsPorRodovia(Long rodoviaId) {
-        return kmRepository.findByRodoviaId(rodoviaId);
+    public List<KmRodoviaDTO> listarKmsPorRodovia(Long rodoviaId) {
+        List<KmRodovia> kms = kmRepository.findByRodoviaId(rodoviaId);
+
+        // Converte para DTO antes de cachear/retornar
+        return kms.stream()
+                .map(this::toDTO)
+                .collect(Collectors.toList());
     }
 
     @Transactional
@@ -57,6 +63,15 @@ public class GestaoRodoviaService {
     @CacheEvict(value = "lista-kms", allEntries = true)
     public void deletarKm(Long id){
         kmRepository.deleteById(id);
+    }
+
+    // Método auxiliar de conversão
+    private KmRodoviaDTO toDTO(KmRodovia entity) {
+        return new KmRodoviaDTO(
+                entity.getId(),
+                entity.getValor(),
+                entity.getRodovia().getId()
+        );
     }
 
     /**
