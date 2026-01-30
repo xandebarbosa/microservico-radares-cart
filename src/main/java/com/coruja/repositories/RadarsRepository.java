@@ -40,31 +40,17 @@ public interface RadarsRepository extends JpaRepository<Radars, Long>, JpaSpecif
      * ✅ BUSCA COM FILTROS COMBINADOS
      */
     @Query(value = """
-        SELECT DISTINCT ON (r.data, r.hora, r.placa) r.* FROM radars_cart r
-        WHERE 1=1
-        AND (CAST(:placa AS TEXT) IS NULL OR r.placa ILIKE CONCAT('%', CAST(:placa AS TEXT), '%'))
-        AND (CAST(:praca AS TEXT) IS NULL OR r.praca ILIKE CONCAT('%', CAST(:praca AS TEXT), '%'))
-        AND (CAST(:rodovia AS TEXT) IS NULL OR r.rodovia ILIKE CONCAT('%', CAST(:rodovia AS TEXT), '%'))
-        AND (CAST(:km AS TEXT) IS NULL OR r.km = CAST(:km AS TEXT))
-        AND (CAST(:sentido AS TEXT) IS NULL OR r.sentido = CAST(:sentido AS TEXT))
-        AND (CAST(:data AS DATE) IS NULL OR r.data = CAST(:data AS DATE))
-        AND (CAST(:horaInicial AS TIME) IS NULL OR r.hora >= CAST(:horaInicial AS TIME))
-        AND (CAST(:horaFinal AS TIME) IS NULL OR r.hora <= CAST(:horaFinal AS TIME))
-        ORDER BY r.data DESC, r.hora DESC, r.placa
-        """,
-            countQuery = """
-        SELECT COUNT(DISTINCT (r.data, r.hora, r.placa))
-        FROM radars_cart r
-        WHERE 1=1
-        AND (CAST(:placa AS TEXT) IS NULL OR r.placa ILIKE CONCAT('%', CAST(:placa AS TEXT), '%'))
-        AND (CAST(:praca AS TEXT) IS NULL OR r.praca ILIKE CONCAT('%', CAST(:praca AS TEXT), '%'))
-        AND (CAST(:rodovia AS TEXT) IS NULL OR r.rodovia ILIKE CONCAT('%', CAST(:rodovia AS TEXT), '%'))
-        AND (CAST(:km AS TEXT) IS NULL OR r.km = CAST(:km AS TEXT))
-        AND (CAST(:sentido AS TEXT) IS NULL OR r.sentido = CAST(:sentido AS TEXT))
-        AND (CAST(:data AS DATE) IS NULL OR r.data = CAST(:data AS DATE))
-        AND (CAST(:horaInicial AS TIME) IS NULL OR r.hora >= CAST(:horaInicial AS TIME))
-        AND (CAST(:horaFinal AS TIME) IS NULL OR r.hora <= CAST(:horaFinal AS TIME))
-        """,
+    SELECT DISTINCT ON (r.data, r.hora, r.placa) r.* FROM radars_cart r
+    WHERE 1=1
+    AND (CAST(:placa AS TEXT) IS NULL OR r.placa ILIKE CONCAT('%', CAST(:placa AS TEXT), '%'))    
+    AND (CAST(:rodovia AS TEXT) IS NULL OR r.rodovia ILIKE CONCAT('%', CAST(:rodovia AS TEXT), '%'))
+    AND (CAST(:km AS TEXT) IS NULL OR r.km = CAST(:km AS TEXT))
+    AND (CAST(:sentido AS TEXT) IS NULL OR r.sentido ILIKE CAST(:sentido AS TEXT)) -- Alterado para ILIKE
+    AND (CAST(:data AS DATE) IS NULL OR r.data = CAST(:data AS DATE))
+    AND (CAST(:horaInicial AS TIME) IS NULL OR r.hora >= CAST(:horaInicial AS TIME))
+    AND (CAST(:horaFinal AS TIME) IS NULL OR r.hora <= CAST(:horaFinal AS TIME))
+    ORDER BY r.data DESC, r.hora DESC, r.placa
+    """,
             nativeQuery = true
     )
     @QueryHints(@QueryHint(name = "org.hibernate.readOnly", value = "true"))
@@ -74,7 +60,6 @@ public interface RadarsRepository extends JpaRepository<Radars, Long>, JpaSpecif
             @Param("horaFinal") LocalTime horaFinal,
             @Param("placa") String placa,
             @Param("rodovia") String rodovia,
-            @Param("praca") String praca,
             @Param("km") String km,
             @Param("sentido") String sentido,
             Pageable pageable

@@ -78,26 +78,20 @@ public class RadarsService {
             LocalTime horaInicial,
             LocalTime horaFinal,
             String rodovia,
-            String praca,
             String km,
             String sentido,
             Pageable pageable) {
 
-        // Normalização de Strings (Trim + Null Check)
-        String filtroRodovia = normalize(rodovia);
-        String filtroKm = normalize(km);
-        String filtroSentido = normalize(sentido);
-        String filtroPraca = normalize(praca);
+        log.info("🔎 Executando query no Banco: Data={}, Rodovia={}, Sentido={}", data, rodovia, sentido);
 
         Page<Radars> page = radarsRepository.findByLocalFilter(
                 data, // placa (não usamos na busca por local)
                 horaInicial,
                 horaFinal,
                 null,
-                filtroPraca,
-                filtroRodovia,
-                filtroKm,
-                filtroSentido, // Passa o sentido tratado
+                normalize(rodovia),
+                normalize(km),
+                sentido, // Passa o sentido tratado
                 pageable
 
         );

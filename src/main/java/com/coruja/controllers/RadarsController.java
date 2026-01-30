@@ -55,9 +55,7 @@ public class RadarsController {
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate data,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.TIME) LocalTime horaInicial,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.TIME) LocalTime horaFinal,
-
             @RequestParam(required = false) String rodovia,
-            @RequestParam(required = false) String praca,
             @RequestParam(required = false) String km,
             @RequestParam(required = false) String sentido,
 
@@ -73,7 +71,6 @@ public class RadarsController {
                 rodovia,
                 km,
                 sentido,
-                praca,
                 pageable
         );
 
