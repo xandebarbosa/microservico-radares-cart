@@ -29,6 +29,7 @@ public interface RadarsRepository extends JpaRepository<Radars, Long>, JpaSpecif
         """,
             countQuery = """
         SELECT COUNT(DISTINCT (r.data, r.hora, r.placa))
+        FROM radars_cart r
         WHERE r.placa ILIKE CONCAT('%', :placa, '%')
         """, nativeQuery = true)
     @QueryHints(@QueryHint(name = "org.hibernate.readOnly", value = "true"))

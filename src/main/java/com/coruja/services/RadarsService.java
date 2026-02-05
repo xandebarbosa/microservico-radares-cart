@@ -28,6 +28,7 @@ import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
@@ -46,7 +47,9 @@ public class RadarsService {
     private final RabbitTemplate rabbitTemplate;
     private final LocalizacaoRadarRepository localizacaoRadarRepository;
     // Thread Pool para tarefas assíncronas (RabbitMQ e Cache)
-    private final ExecutorService executorService = Executors.newFixedThreadPool(10);
+    private final ExecutorService executorService = Executors.newVirtualThreadPerTaskExecutor();
+    // ✅ Cache thread-safe para metadados frequentes (ex: nomes de praças)
+    private final ConcurrentHashMap<String, String> normalizeCache = new ConcurrentHashMap<>();
 
     // ✅ LIMITE DE DADOS HISTÓRICOS (últimos 90 dias)
     private static final int DIAS_HISTORICO = 90;
@@ -212,7 +215,14 @@ public class RadarsService {
     }
 
     private String normalize(String input) {
-        return (input != null) ? input.trim().toUpperCase() : null;
+        if (input == null) return null;
+        return normalizeCache.computeIfAbsent(input, i -> i.trim().toUpperCase());
+    }
+
+    @jakarta.annotation.PreDestroy
+    public void shutdownExecutor() {
+        log.info("Encerrando Executor de Virtual Threads...");
+        executorService.shutdown();
     }
 
     /**

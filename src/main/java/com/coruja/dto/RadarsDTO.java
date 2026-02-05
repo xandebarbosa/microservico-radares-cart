@@ -14,7 +14,6 @@ import java.time.LocalTime;
 @AllArgsConstructor
 @Builder
 public class RadarsDTO {
-
     private Long id;
     private LocalDate data;
     private LocalTime hora;

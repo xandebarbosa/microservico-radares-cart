@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 @Service
@@ -22,23 +23,39 @@ public class GestaoRodoviaService {
     private final RodoviaRepository rodoviaRepository;
     private final KmRodoviaRepository kmRepository;
 
-    @Cacheable(value = "lista-rodovias")
+    // ✅ Cache Thread-safe de nível de classe para evitar batida no banco e race conditions
+    private final ConcurrentHashMap<String, Rodovia> rodoviaCache = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, Set<String>> kmCachePorRodovia = new ConcurrentHashMap<>();
+
+    //@Cacheable(value = "lista-rodovias")
     public List<Rodovia> listarRodovias() {
-        return rodoviaRepository.findAll();
+        // Se o cache estiver vazio, tenta carregar do banco
+        if (rodoviaCache.isEmpty()) {
+            log.info("🚚 Cache de rodovias vazio, carregando do banco de dados...");
+            List<Rodovia> doBanco = rodoviaRepository.findAll();
+            doBanco.forEach(r -> rodoviaCache.putIfAbsent(r.getNome(), r));
+        }
+
+        // Retorna a lista a partir dos valores do cache
+        return new ArrayList<>(rodoviaCache.values());
     }
 
     @Transactional
     @CacheEvict(value = "lista-rodovias", allEntries = true)
     public Rodovia salvarRodovia(Rodovia rodovia) {
+        // Verifica existência para evitar duplicidade
         if (rodoviaRepository.existsByNome(rodovia.getNome())) {
             throw new IllegalArgumentException("Rodovia já existe.");
         }
-        return rodoviaRepository.save(rodovia);
+        Rodovia salva = rodoviaRepository.save(rodovia);
+        rodoviaCache.put(salva.getNome(), salva); // Atualiza cache imediatamente
+        return salva;
     }
 
     @Transactional
-    @CacheEvict(value = "lista-rodovias", allEntries = true)
     public void deletarRodovia(Long id) {
+        rodoviaRepository.findById(id).ifPresent(r -> rodoviaCache.remove(r.getNome()));
+        kmCachePorRodovia.remove(id);
         rodoviaRepository.deleteById(id);
     }
 
@@ -83,55 +100,47 @@ public class GestaoRodoviaService {
     public void registrarDescobertas(Map<String, Set<String>> descobertas) {
         if (descobertas.isEmpty()) return;
 
-        log.info("🧠 Processando aprendizado de domínio: {} rodovias encontradas...", descobertas.size());
+        log.info("🧠 Aprendizado de domínio: Processando {} rodovias...", descobertas.size());
 
-        // 1. Carrega tudo que já existe no banco para memória (evita N+1 selects)
-        // Mapeia Nome -> Entidade Rodovia
-        Map<String, Rodovia> rodoviasExistentes = rodoviaRepository.findAll().stream()
-                .collect(Collectors.toMap(Rodovia::getNome, r -> r));
+        // 1. Inicialização preguiçosa (Lazy Load) do cache se estiver vazio
+        if (rodoviaCache.isEmpty()) {
+            rodoviaRepository.findAll().forEach(r -> rodoviaCache.put(r.getNome(), r));
+        }
 
-        // Mapeia ID_Rodovia -> Lista de Kms (String)
-        Map<Long, Set<String>> kmsExistentes = kmRepository.findAll().stream()
-                .collect(Collectors.groupingBy(
-                        k -> k.getRodovia().getId(),
-                        Collectors.mapping(KmRodovia::getValor, Collectors.toSet())
-                ));
+        List<KmRodovia> novosKmsParaSalvar = new ArrayList<>();
 
-        List<Rodovia> novasRodovias = new ArrayList<>();
-        List<KmRodovia> novosKms = new ArrayList<>();
-
-        // 2. Itera sobre o que veio do FTP
         descobertas.forEach((nomeRodovia, listaKms) -> {
-            // A. Trata Rodovia
-            Rodovia rodovia = rodoviasExistentes.get(nomeRodovia);
+            // ✅ Uso de computeIfAbsent para garantir que apenas UMA thread crie a rodovia
+            Rodovia rodovia = rodoviaCache.computeIfAbsent(nomeRodovia, nome -> {
+                log.info("🆕 Registrando nova Rodovia no domínio: {}", nome);
+                return rodoviaRepository.save(Rodovia.builder().nome(nome).build());
+            });
 
-            if (rodovia == null) {
-                // Se não existe, cria e já salva para ter o ID
-                rodovia = Rodovia.builder().nome(nomeRodovia).build();
-                rodovia = rodoviaRepository.save(rodovia); // Save imediato para gerar ID
-                rodoviasExistentes.put(nomeRodovia, rodovia);
-                log.info("🆕 Nova Rodovia descoberta: {}", nomeRodovia);
-            }
-
-            // B. Trata KMs dessa Rodovia
-            Set<String> kmsNoBanco = kmsExistentes.getOrDefault(rodovia.getId(), new HashSet<>());
+            // 2. Tratamento de KMs com cache local por rodovia
+            Set<String> kmsExistentes = kmCachePorRodovia.computeIfAbsent(rodovia.getId(), id -> {
+                // Se não está no cache, busca do banco ou inicializa
+                return kmRepository.findByRodoviaId(id).stream()
+                        .map(KmRodovia::getValor)
+                        .collect(Collectors.toCollection(HashSet::new));
+            });
 
             for (String valorKm : listaKms) {
-                if (!kmsNoBanco.contains(valorKm)) {
-                    novosKms.add(KmRodovia.builder()
-                            .valor(valorKm)
-                            .rodovia(rodovia)
-                            .build());
-                    // Adiciona ao set local para evitar duplicata dentro do mesmo loop
-                    kmsNoBanco.add(valorKm);
+                // ✅ Sincronização fina no set de KMs para evitar duplicatas em novosKmsParaSalvar
+                synchronized (kmsExistentes) {
+                    if (kmsExistentes.add(valorKm)) {
+                        novosKmsParaSalvar.add(KmRodovia.builder()
+                                .valor(valorKm)
+                                .rodovia(rodovia)
+                                .build());
+                    }
                 }
             }
         });
 
-        // 3. Salva todos os KMs novos de uma vez (Batch Insert)
-        if (!novosKms.isEmpty()) {
-            kmRepository.saveAll(novosKms);
-            log.info("💾 Salvos {} novos KMs no banco de dados de domínio.", novosKms.size());
+        // 3. Persistência em lote (Batch) para performance
+        if (!novosKmsParaSalvar.isEmpty()) {
+            kmRepository.saveAll(novosKmsParaSalvar);
+            log.info("💾 Sucesso: {} novos KMs adicionados ao domínio.", novosKmsParaSalvar.size());
         }
     }
 }
