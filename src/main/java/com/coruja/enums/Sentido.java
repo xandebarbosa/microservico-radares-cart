@@ -8,8 +8,6 @@ public enum Sentido {
     SUL("Sul"),
     LESTE("Leste"),
     OESTE("Oeste"),
-    CRESCENTE("Crescente"),
-    DECRESCENTE("Decrescente"),
     // Fallback para casos desconhecidos ou vazios
     NAO_IDENTIFICADO("N/A");
 

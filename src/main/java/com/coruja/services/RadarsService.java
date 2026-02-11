@@ -219,12 +219,6 @@ public class RadarsService {
         return normalizeCache.computeIfAbsent(input, i -> i.trim().toUpperCase());
     }
 
-    @jakarta.annotation.PreDestroy
-    public void shutdownExecutor() {
-        log.info("Encerrando Executor de Virtual Threads...");
-        executorService.shutdown();
-    }
-
     /**
      * Converte Page<Entity> para RadarPageDTO (Estrutura paginada para JSON)
      */

@@ -43,7 +43,7 @@ public interface RadarsRepository extends JpaRepository<Radars, Long>, JpaSpecif
     @Query(value = """
     SELECT DISTINCT ON (r.data, r.hora, r.placa) r.* FROM radars_cart r
     WHERE 1=1
-    AND (CAST(:placa AS TEXT) IS NULL OR r.placa ILIKE CONCAT('%', CAST(:placa AS TEXT), '%'))    
+    AND (CAST(:placa AS TEXT) IS NULL OR r.placa ILIKE CONCAT('%', CAST(:placa AS TEXT), '%'))
     AND (CAST(:rodovia AS TEXT) IS NULL OR r.rodovia ILIKE CONCAT('%', CAST(:rodovia AS TEXT), '%'))
     AND (CAST(:km AS TEXT) IS NULL OR r.km = CAST(:km AS TEXT))
     AND (CAST(:sentido AS TEXT) IS NULL OR r.sentido ILIKE CAST(:sentido AS TEXT)) -- Alterado para ILIKE

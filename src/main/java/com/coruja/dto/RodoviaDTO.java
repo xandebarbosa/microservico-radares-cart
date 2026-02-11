@@ -5,14 +5,17 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.io.Serial;
 import java.io.Serializable;
 
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class KmRodoviaDTO implements Serializable {
+public class RodoviaDTO implements Serializable {
+    @Serial
+    private static final long serialVersionUID = 1L;
+
     private Long id;
-    private String valor;
-    private Long rodoviaId; // Trazemos apenas o ID, evitando o loop/erro do Hibernate
+    private String nome;
 }
