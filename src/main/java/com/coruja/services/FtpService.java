@@ -263,7 +263,7 @@ public class FtpService {
     }
 
     /**
-     * NOVO MÉTODO DE PARSING - A Correção do Bug
+     * NOVO MÉTODO DE PARSING
      * Usa uma Expressão Regular para extrair os dados de forma segura.
      */
     private Radars parseLineWithRegex(String linha, Map<String, LocalizacaoRadar> mapaLocalizacao, Map<String, Set<String>> acumuladorDescobertas) {

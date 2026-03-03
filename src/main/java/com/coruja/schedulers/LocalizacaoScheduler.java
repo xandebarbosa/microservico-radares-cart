@@ -22,7 +22,7 @@ public class LocalizacaoScheduler {
     // Se não aparecer no log, a classe não está sendo lida (erro de pacote/scan).
     @PostConstruct
     public void init() {
-        logger.info(">>> LocalizacaoScheduler carregado com sucesso! O primeiro job rodará em breve.");
+        logger.info(">>> LocalizacaoScheduler Cart carregado com sucesso! O primeiro job rodará em breve.");
     }
 
     /**
@@ -32,7 +32,7 @@ public class LocalizacaoScheduler {
      */
     @Scheduled(fixedRate = 300000) // 5 minutos
     public void vincularLocalizacoes() {
-        logger.info("Iniciando job de vinculação de localizações...");
+        logger.info("Iniciando job de vinculação de localizações Concessionária Cart...");
 
         // QUERY EXPLICADA:
         // 1. REPLACE(..., '-', '') -> Iguala "SP-270" com "SP270".

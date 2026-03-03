@@ -31,7 +31,7 @@ public class GestaoRodoviaService {
     public List<Rodovia> listarRodovias() {
         // Se o cache estiver vazio, tenta carregar do banco
         if (rodoviaCache.isEmpty()) {
-            log.info("🚚 Cache de rodovias vazio, carregando do banco de dados...");
+            log.info("🚚 Cache de rodovias vazio, carregando do banco de dados Cart...");
             List<Rodovia> doBanco = rodoviaRepository.findAll();
             doBanco.forEach(r -> rodoviaCache.putIfAbsent(r.getNome(), r));
         }
