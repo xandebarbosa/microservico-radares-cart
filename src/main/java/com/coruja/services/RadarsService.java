@@ -27,6 +27,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -61,6 +62,15 @@ public class RadarsService {
     }
 
     /**
+     * Retorna os hashes (Placa + Hora + Praça) dos radares salvos em uma data específica.
+     * Usado para evitar duplicatas no FtpService de forma rápida (em memória).
+     */
+    @Transactional(readOnly = true)
+    public Set<String> buscarHashesPorData(LocalDate data) {
+        return radarsRepository.findHashesByData(data);
+    }
+
+    /**
      * Busca por PLACA: Retorna histórico completo
      */
     @Transactional(readOnly = true)
@@ -85,7 +95,7 @@ public class RadarsService {
             String sentido,
             Pageable pageable) {
 
-        log.info("🔎 Executando query no Banco: Data={}, Rodovia={}, Sentido={}", data, rodovia, sentido);
+        log.debug("🔎 Executando query no Banco: Data={}, Rodovia={}, Sentido={}", data, rodovia, sentido);
 
         Page<Radars> page = radarsRepository.findByLocalFilter(
                 data, // placa (não usamos na busca por local)

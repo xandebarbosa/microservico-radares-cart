@@ -3,41 +3,36 @@ package com.coruja.services;
 import com.coruja.entities.LocalizacaoRadar;
 import com.coruja.entities.Radars;
 import com.coruja.repositories.LocalizacaoRadarRepository;
-import com.coruja.repositories.RadarsRepository;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.net.ftp.FTPClient;
 import org.apache.commons.net.ftp.FTPReply;
-import org.locationtech.jts.geom.GeometryFactory;
-import org.locationtech.jts.geom.Point;
-import org.locationtech.jts.geom.PrecisionModel;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
-import java.io.*;
+import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.*;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.transaction.annotation.Transactional;
-
 @Service
 @Slf4j
+@RequiredArgsConstructor // Injeta automaticamente as variáveis 'final' (substitui o construtor manual)
 public class FtpService {
-    private static final Logger logger = LoggerFactory.getLogger(FtpService.class);
-    //private static final Logger LOGGER = Logger.getLogger(FtpService.class.getName());
 
     @Value("${ftp.host}")
     private String FTP_HOST;
@@ -57,7 +52,6 @@ public class FtpService {
     @Value("${ftp.local.directory}")
     private String LOCAL_DIRECTORY;
 
-    // NOVO: Injeta o valor do intervalo do application.properties
     @Value("${ftp.schedule.rate.ms}")
     private long ftpScheduleRateMs;
 
@@ -67,29 +61,14 @@ public class FtpService {
     private final LocalizacaoRadarRepository localizacaoRepository;
     private final GestaoRodoviaService gestaoRodoviaService;
 
-    private final GeometryFactory geometryFactory = new GeometryFactory(new PrecisionModel(), 4326);
-
-    // Regex para capturar os dados da linha. MUITO MAIS ROBUSTO!
-    // Captura 6 grupos: 1=Data, 2=Hora, 3=Placa, 4=Praça/Sentido, 5=Rodovia, 6=KM
     private static final Pattern LINE_PATTERN = Pattern.compile(
             "^(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(.+?)\\s+(SP\\S+)\\s+(KM\\S+)$"
     );
 
-    public FtpService(RadarsService radarsService, LocalizacaoRadarRepository localizacaoRepository, GestaoRodoviaService gestaoRodoviaService) {
-        this.radarsService = radarsService;
-        this.localizacaoRepository = localizacaoRepository;
-        this.gestaoRodoviaService = gestaoRodoviaService;
-    }
-
-    // AJUSTE: A anotação @Scheduled agora lê o valor do application.properties
     @Scheduled(fixedRateString = "${ftp.schedule.rate.ms}")
     public void processarFtp() {
-
-        // Armazenamos a hora de início para um cálculo mais preciso
-        // LocalDateTime horaInicio = LocalDateTime.now();
         lastExecutionTime = LocalDateTime.now();
-        logger.info("Iniciando verificação de arquivos no FTP às {}...",  lastExecutionTime);
-        //horaInicio.format(DateTimeFormatter.ofPattern("HH:mm:ss"))
+        log.debug("Iniciando verificação de arquivos no FTP às {}...", lastExecutionTime);
 
         FTPClient ftpClient = new FTPClient();
 
@@ -102,179 +81,91 @@ public class FtpService {
             String[] arquivosRemotos = ftpClient.listNames();
 
             if (arquivosRemotos == null || arquivosRemotos.length == 0) {
-                logger.info("Nenhum arquivo encontrado no diretório do FTP.");
+                log.debug("Nenhum arquivo encontrado no diretório do FTP.");
                 return;
             }
 
-            // AJUSTE: Definir a data limite para os últimos 2 meses.
-            LocalDate dataLimite = LocalDate.now().minusDays(1);
-            logger.info("Definida data limite para processamento: {}", dataLimite.format(DateTimeFormatter.ISO_LOCAL_DATE));
+            LocalDate dataLimite = LocalDate.now().minusMonths(1);
+            String dataHojeStr = LocalDate.now().format(DateTimeFormatter.ofPattern("dd-MM-yyyy"));
 
-            List<String> novosArquivos = Arrays.stream(arquivosRemotos)
-                    .filter(arquivo -> !arquivosLocais.contains(arquivo)) // Filtra arquivos que já foram baixados
-                    .filter(arquivo -> isDentroDoPeriodo(arquivo, dataLimite)) // NOVO: Filtra arquivos pela data
+            // FILTRAGEM INTELIGENTE DE ARQUIVOS
+            List<String> arquivosParaProcessar = Arrays.stream(arquivosRemotos)
+                    .filter(arquivo -> isDentroDoPeriodo(arquivo, dataLimite))
+                    .filter(arquivo -> arquivo.contains(dataHojeStr) || !arquivosLocais.contains(arquivo))
                     .collect(Collectors.toList());
 
-            if (novosArquivos.isEmpty()) {
-                logger.info("Nenhum arquivo novo e dentro do período de 2 meses para processar.");
-                return;
-            }
+            if (arquivosParaProcessar.isEmpty()) return;
 
-            logger.info("Encontrados {} novos arquivos para processar.", novosArquivos.size());
-
-            // Pré-carrega o cache de localizações UMA VEZ antes de processar os arquivos
-            // Isso evita o erro de conexão do banco por excesso de consultas
             Map<String, LocalizacaoRadar> mapaLocalizacao = carregarMapaLocalizacao();
-
-            // Mapa para acumular descobertas: Rodovia -> Set de KMs únicos
-            // Usamos Set para remover duplicatas automaticamente (ex: km 100 aparece 50 vezes)
             Map<String, Set<String>> descobertasDoLote = new HashMap<>();
-
             List<Radars> todosOsRadares = new ArrayList<>();
 
-            for (String nomeArquivo : novosArquivos) {
+            // Pré-carrega APENAS os dados de HOJE para evitar duplicatas rapidamente em memória
+            Set<String> hashesSalvosHoje = radarsService.buscarHashesPorData(LocalDate.now());
+
+            for (String nomeArquivo : arquivosParaProcessar) {
                 baixarArquivo(ftpClient, nomeArquivo, localPath).ifPresent(arquivoLocal -> {
-                    logger.info("Processando arquivo: {}", nomeArquivo);
-                    // Passa o mapa carregado para o método de processamento
-                    todosOsRadares.addAll(processarArquivo(arquivoLocal, mapaLocalizacao, descobertasDoLote));
+
+                    todosOsRadares.addAll(processarArquivo(arquivoLocal, mapaLocalizacao, descobertasDoLote, hashesSalvosHoje));
+
+                    // Apaga o arquivo local SE for o arquivo de hoje, para forçar re-download contínuo (append)
+                    if (nomeArquivo.contains(dataHojeStr)) {
+                        try {
+                            Files.deleteIfExists(arquivoLocal);
+                        } catch (IOException e) {
+                            log.warn("Não foi possível apagar arquivo de hoje: {}", nomeArquivo);
+                        }
+                    }
                 });
             }
 
-            // 1. Salva os Radares (Fluxo normal)
             if (!todosOsRadares.isEmpty()) {
-                logger.info("Salvando {} novos registros de radares no banco de dados.", todosOsRadares.size());
+                log.info("Salvando {} novos registros de radares no banco de dados.", todosOsRadares.size());
                 radarsService.saveRadars(todosOsRadares);
-                logger.info("Banco de dados atualizado com sucesso.");
-            } else {
-                logger.info("Nenhum registro válido encontrado nos novos arquivos.");
             }
 
-            // 2. Salva as Descobertas de Domínio (Fluxo Novo)
             if (!descobertasDoLote.isEmpty()) {
                 gestaoRodoviaService.registrarDescobertas(descobertasDoLote);
-            } else {
-                logger.info("Nenhum registro válido encontrado nos novos arquivos.");
             }
 
         } catch (IOException e) {
-            logger.error("Erro de I/O durante o processamento do FTP.", e);
+            log.error("Erro de I/O durante o processamento do FTP.", e);
         } finally {
             desconectarFtp(ftpClient);
-
-            // NOVO: Adiciona o log com a hora da próxima execução
-            // O fixedRate começa a contar a partir do INÍCIO da execução anterior.
             LocalDateTime proximaExecucao = lastExecutionTime.plus(ftpScheduleRateMs, ChronoUnit.MILLIS);
-            logger.info("Processo finalizado. Próxima execução agendada para: {}",
+            log.debug("Processo finalizado. Próxima execução agendada para: {}",
                     proximaExecucao.format(DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm:ss")));
-            logger.info("*******************************************\n");
         }
     }
 
-    // =========================================================================
-    // OTIMIZAÇÃO: Carregamento em Memória
-    // =========================================================================
-    private Map<String, LocalizacaoRadar> carregarMapaLocalizacao() {
-        try {
-            logger.info("🗺️ Carregando cache de localizações do banco...");
-            List<LocalizacaoRadar> todasLocs = localizacaoRepository.findAll();
-            Map<String, LocalizacaoRadar> map = new HashMap<>();
-
-            for (LocalizacaoRadar loc : todasLocs) {
-                if (loc.getPraca() != null) {
-                    // Normaliza a chave (trim + uppercase) para facilitar o match
-                    map.put(normalizeKey(loc.getPraca()), loc);
-                }
-            }
-            logger.info("🗺️ Cache carregado: {} registros.", map.size());
-            return map;
-        } catch (Exception e) {
-            logger.error("❌ Erro ao carregar cache de localizações: {}", e.getMessage());
-            return new HashMap<>(); // Retorna vazio para não travar o processo, apenas os vínculos falharão
-        }
-    }
-
-    private String normalizeKey(String input) {
-        return input == null ? "" : input.trim().toUpperCase(); // Normalização simples
-    }
-
-    @Scheduled(fixedDelay = 1000) // Atualiza a cada segundo
-    public void updateCountdown() {
-        if (lastExecutionTime != null) {
-            long secondsRemaining = 300 - ChronoUnit.SECONDS.between(lastExecutionTime, LocalDateTime.now());
-            if (secondsRemaining > 0) {
-                System.out.printf("\rPróxima execução em: %02d:%02d",
-                        secondsRemaining / 60,
-                        secondsRemaining % 60);
-            } else {
-                System.out.print("\rPróxima execução em: 00:00 - Iniciando...");
-            }
-        }
-    }
-
-    // NOVO: Método auxiliar para verificar se a data do arquivo está no período desejado.
-    private boolean isDentroDoPeriodo(String nomeArquivo, LocalDate dataLimite) {
-        Optional<LocalDate> dataArquivoOpt = extrairDataDoNome(nomeArquivo);
-        if (dataArquivoOpt.isEmpty()) {
-            logger.warn("Não foi possível extrair a data do arquivo '{}'. Ele será ignorado.", nomeArquivo);
-            return false; // Ignora arquivos sem data no nome
-        }
-        // Retorna true se a data do arquivo NÃO for anterior à data limite.
-        boolean dentroDoPeriodo = !dataArquivoOpt.get().isBefore(dataLimite);
-        if (!dentroDoPeriodo) {
-            logger.info("Arquivo '{}' está fora do período de 2 meses. Ignorando.", nomeArquivo);
-        }
-        return dentroDoPeriodo;
-    }
-
-    // AJUSTE: Método agora retorna um Optional para tratar melhor os casos de erro.
-    private Optional<LocalDate> extrairDataDoNome(String nomeArquivo) {
-        try {
-            Pattern pattern = Pattern.compile("\\d{2}-\\d{2}-\\d{4}");
-            Matcher matcher = pattern.matcher(nomeArquivo);
-            if (matcher.find()) {
-                String dataStr = matcher.group();
-                DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd-MM-yyyy");
-                return Optional.of(LocalDate.parse(dataStr, formatter));
-            }
-        } catch (DateTimeParseException e) {
-            logger.warn("Erro ao extrair data do arquivo {}: {}", nomeArquivo, e.getMessage());
-        }
-        return Optional.empty();
-    }
-
-    // =========================================================================
-    // Processamento de Arquivo
-    // =========================================================================
-
-    // Método agora recebe o MAPA, evitando consultas ao banco dentro do loop
     @Transactional
     public List<Radars> processarArquivo(Path arquivoLocal,
                                          Map<String, LocalizacaoRadar> mapaLocalizacao,
-                                         Map<String, Set<String>> acumuladorDescobertas) { // <--- NOVO PARAMETRO
+                                         Map<String, Set<String>> acumuladorDescobertas,
+                                         Set<String> hashesSalvosHoje) {
+        // try-with-resources garante que o arquivo não fique "preso" na memória/disco do Windows/Linux
         try (Stream<String> lines = Files.lines(arquivoLocal, StandardCharsets.ISO_8859_1)) {
             return lines
-                    .map(linha -> parseLineWithRegex(linha, mapaLocalizacao, acumuladorDescobertas)) // Passa adiante
+                    .map(linha -> parseLineWithRegex(linha, mapaLocalizacao, acumuladorDescobertas, hashesSalvosHoje))
                     .filter(Objects::nonNull)
                     .collect(Collectors.toList());
         } catch (IOException e) {
-            logger.error("Falha ao ler o arquivo local: {}", arquivoLocal, e);
+            log.error("Falha ao ler o arquivo local: {}", arquivoLocal, e);
             return Collections.emptyList();
         }
     }
 
-    /**
-     * NOVO MÉTODO DE PARSING
-     * Usa uma Expressão Regular para extrair os dados de forma segura.
-     */
-    private Radars parseLineWithRegex(String linha, Map<String, LocalizacaoRadar> mapaLocalizacao, Map<String, Set<String>> acumuladorDescobertas) {
-        // Ignora linhas de cabeçalho, rodapé ou vazias
+    private Radars parseLineWithRegex(String linha,
+                                      Map<String, LocalizacaoRadar> mapaLocalizacao,
+                                      Map<String, Set<String>> acumuladorDescobertas,
+                                      Set<String> hashesSalvosHoje) {
+
         if (linha.trim().isEmpty() || linha.contains("Data_Transação") || linha.startsWith("Changed database") || linha.matches("[-\\s]+") || linha.matches("\\(\\d+ rows affected\\)")) {
             return null;
         }
 
         Matcher matcher = LINE_PATTERN.matcher(linha.trim());
         if (!matcher.matches()) {
-            logger.warn("Linha não corresponde ao padrão esperado, ignorando: '{}'", linha);
             return null;
         }
 
@@ -289,7 +180,9 @@ public class FtpService {
             String placa = placaBruta.replaceAll("[^A-Za-z0-9]", "");
             if (placa.length() > 7) placa = placa.substring(0, 7);
 
-            // Lógica para separar praça e sentido
+            LocalDate data = LocalDate.parse(dataStr, DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+
+            // 1. PRIMEIRO: Lógica para separar praça e sentido
             String[] partesPraca = pracaESentido.split("\\s+");
             String sentido = "N/I";
             String praca = pracaESentido;
@@ -299,43 +192,66 @@ public class FtpService {
                 praca = String.join(" ", Arrays.copyOf(partesPraca, partesPraca.length - 1));
             }
 
-            LocalDate data = LocalDate.parse(dataStr, DateTimeFormatter.ofPattern("yyyy-MM-dd"));
-            LocalTime hora = LocalTime.parse(horaStr, DateTimeFormatter.ofPattern("HH:mm:ss[.SSS]"));
+            // 2. DEPOIS: Verificação de Duplicidade usando a 'praca' já limpa!
+            if (data.isEqual(LocalDate.now())) {
+                // Agora o hash fica perfeito (ex: CUM390812:57:51Ourinhos 03)
+                String hashDaLinha = placa + horaStr + praca;
 
-            // BUSCA OTIMIZADA: Usa o Map em vez do Repository
-            // Isso é 1000x mais rápido e não derruba a conexão
+                if (hashesSalvosHoje.contains(hashDaLinha)) {
+                    return null; // Linha repetida, pula silenciosamente!
+                }
+
+                hashesSalvosHoje.add(hashDaLinha);
+            }
+
+            LocalTime hora = LocalTime.parse(horaStr, DateTimeFormatter.ofPattern("HH:mm:ss[.SSS]"));
             LocalizacaoRadar localizacaoDoRadar = mapaLocalizacao.get(normalizeKey(praca));
 
-            // Adiciona ao acumulador. Se a rodovia não existe no mapa, cria.
-            // Se já existe, adiciona o km ao Set (que ignora duplicatas).
             if (acumuladorDescobertas != null) {
-                acumuladorDescobertas
-                        .computeIfAbsent(rodovia, k -> new HashSet<>())
-                        .add(km);
+                acumuladorDescobertas.computeIfAbsent(rodovia, k -> new HashSet<>()).add(km);
             }
 
             return new Radars(data, hora, placa, praca, rodovia, km, sentido, localizacaoDoRadar);
 
         } catch (Exception e) {
-            logger.error("Erro ao converter dados da linha: '{}'. Causa: {}", linha, e.getMessage());
+            log.error("Erro ao converter dados da linha: '{}'. Causa: {}", linha, e.getMessage());
             return null;
         }
     }
 
-    // Métodos de conexão e download foram levemente ajustados para clareza
+    private Map<String, LocalizacaoRadar> carregarMapaLocalizacao() {
+        try {
+            log.debug("🗺️ Carregando cache de localizações do banco...");
+            List<LocalizacaoRadar> todasLocs = localizacaoRepository.findAll();
+            Map<String, LocalizacaoRadar> map = new HashMap<>();
+
+            for (LocalizacaoRadar loc : todasLocs) {
+                if (loc.getPraca() != null) {
+                    map.put(normalizeKey(loc.getPraca()), loc);
+                }
+            }
+            return map;
+        } catch (Exception e) {
+            log.error("❌ Erro ao carregar cache de localizações: {}", e.getMessage());
+            return new HashMap<>();
+        }
+    }
+
+    private String normalizeKey(String input) {
+        return input == null ? "" : input.trim().toUpperCase();
+    }
+
     private void conectarFTP(FTPClient ftpClient) throws IOException {
-        //logger.info("Conectando ao FTP: {}", FTP_HOST);
-        logger.info("Tentando conectar ao FTP com HOST: [{}] e PORTA: [{}]", FTP_HOST, FTP_PORT);
+        log.debug("Tentando conectar ao FTP [{}:{}]", FTP_HOST, FTP_PORT);
         ftpClient.connect(FTP_HOST, FTP_PORT);
         if (!FTPReply.isPositiveCompletion(ftpClient.getReplyCode())) {
-            throw new IOException("Falha ao conectar ao FTP: " + ftpClient.getReplyString());
+            throw new IOException("Falha ao conectar: " + ftpClient.getReplyString());
         }
         if (!ftpClient.login(FTP_USER, FTP_PASS)) {
-            throw new IOException("Falha ao logar no FTP: " + ftpClient.getReplyString());
+            throw new IOException("Falha no login: " + ftpClient.getReplyString());
         }
         ftpClient.enterLocalPassiveMode();
         ftpClient.changeWorkingDirectory(FTP_DIRECTORY);
-        logger.info("Conectado com sucesso.");
     }
 
     private void desconectarFtp(FTPClient ftpClient) {
@@ -343,9 +259,8 @@ public class FtpService {
             try {
                 ftpClient.logout();
                 ftpClient.disconnect();
-                logger.info("Conexão FTP encerrada.");
             } catch (IOException e) {
-                logger.error("Erro ao desconectar do FTP.", e);
+                log.error("Erro ao desconectar do FTP.", e);
             }
         }
     }
@@ -354,28 +269,49 @@ public class FtpService {
         Path arquivoLocal = diretorioLocal.resolve(nomeArquivo);
         try (OutputStream outputStream = Files.newOutputStream(arquivoLocal)) {
             if (ftpClient.retrieveFile(nomeArquivo, outputStream)) {
-                logger.info("Download concluído: {}", nomeArquivo);
+                log.info("Download concluído: {}", nomeArquivo);
                 return Optional.of(arquivoLocal);
             } else {
-                logger.warn("Falha no download do arquivo: {}", nomeArquivo);
-                Files.deleteIfExists(arquivoLocal); // Deleta arquivo parcial se o download falhar
+                log.warn("Falha no download do arquivo: {}", nomeArquivo);
+                Files.deleteIfExists(arquivoLocal);
                 return Optional.empty();
             }
         } catch (IOException e) {
-            logger.error("Erro de I/O ao baixar o arquivo {}", nomeArquivo, e);
+            log.error("Erro de I/O ao baixar {}", nomeArquivo, e);
             return Optional.empty();
         }
     }
 
     private Set<String> listarArquivosLocais(Path diretorioLocal) {
         try (Stream<Path> stream = Files.list(diretorioLocal)) {
-            return stream
-                    .filter(Files::isRegularFile)
+            return stream.filter(Files::isRegularFile)
                     .map(path -> path.getFileName().toString())
                     .collect(Collectors.toSet());
         } catch (IOException e) {
-            logger.warn("Não foi possível listar arquivos locais. Um novo download pode ser tentado.", e);
             return Collections.emptySet();
         }
+    }
+
+    private boolean isDentroDoPeriodo(String nomeArquivo, LocalDate dataLimite) {
+        Optional<LocalDate> dataOpt = extrairDataDoNome(nomeArquivo);
+        if (dataOpt.isEmpty()) return false;
+
+        boolean dentroDoPeriodo = !dataOpt.get().isBefore(dataLimite);
+        if (!dentroDoPeriodo) {
+            log.debug("Arquivo '{}' ignorado (fora do período).", nomeArquivo);
+        }
+        return dentroDoPeriodo;
+    }
+
+    private Optional<LocalDate> extrairDataDoNome(String nomeArquivo) {
+        try {
+            Matcher matcher = Pattern.compile("\\d{2}-\\d{2}-\\d{4}").matcher(nomeArquivo);
+            if (matcher.find()) {
+                return Optional.of(LocalDate.parse(matcher.group(), DateTimeFormatter.ofPattern("dd-MM-yyyy")));
+            }
+        } catch (DateTimeParseException e) {
+            log.warn("Erro extraindo data do arquivo {}", nomeArquivo);
+        }
+        return Optional.empty();
     }
 }

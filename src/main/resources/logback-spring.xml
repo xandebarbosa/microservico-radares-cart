@@ -12,6 +12,8 @@
             <destination>localhost:5000</destination>
         </springProfile>
 
+        <ringBufferSize>32768</ringBufferSize>
+
         <encoder class="net.logstash.logback.encoder.LogstashEncoder">
             <customFields>{"application_name":"${springAppName}"}</customFields>
         </encoder>
@@ -22,6 +24,11 @@
         <appender-ref ref="CONSOLE" />
     </root>
 
+    <logger name="org.springframework" level="WARN" />
+    <logger name="org.apache.catalina" level="WARN" />
+    <logger name="org.hibernate" level="WARN" />
     <logger name="org.hibernate.engine.jdbc.spi.SqlExceptionHelper" level="WARN" />
+
+    <logger name="com.coruja" level="INFO" />
 
 </configuration>

@@ -11,6 +11,10 @@ import java.time.LocalTime;
 @Table(name = "radars_cart",
         indexes = {
                 @Index(name = "idx_radars_placa", columnList = "placa")
+        },
+        uniqueConstraints = {
+            //Garante que uma mesma passagem não seja inserida duas vezes
+            @UniqueConstraint(name = "uk_radar_passagem", columnNames = {"data", "hora", "placa", "praca"})
         }
 )
 @Getter

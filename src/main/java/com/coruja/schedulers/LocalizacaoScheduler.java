@@ -32,7 +32,7 @@ public class LocalizacaoScheduler {
      */
     @Scheduled(fixedRate = 300000) // 5 minutos
     public void vincularLocalizacoes() {
-        logger.info("Iniciando job de vinculação de localizações Concessionária Cart...");
+        logger.debug("Iniciando job de vinculação de localizações Concessionária Cart...");
 
         // QUERY EXPLICADA:
         // 1. REPLACE(..., '-', '') -> Iguala "SP-270" com "SP270".
@@ -81,7 +81,7 @@ public class LocalizacaoScheduler {
             if (totalAtualizado > 0) {
                 logger.info("✅ Sucesso! Total de {} radares vinculados em {} ms.", totalAtualizado, (fim - inicio));
             } else {
-                logger.info("🏁 Nenhum novo vínculo encontrado com os critérios atuais.");
+                logger.debug("🏁 Nenhum novo vínculo encontrado com os critérios atuais.");
             }
 
         } catch (Exception e) {

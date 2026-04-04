@@ -14,10 +14,14 @@ import org.springframework.stereotype.Repository;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.List;
+import java.util.Set;
 
 @Repository
 public interface RadarsRepository extends JpaRepository<Radars, Long>, JpaSpecificationExecutor<Radars> {
 
+    // Retorna uma lista de "Hashes" rápidos das passagens de hoje já salvas
+    @Query("SELECT concat(r.placa, r.hora, r.praca) FROM Radars r WHERE r.data = :data")
+    Set<String> findHashesByData(@Param("data") LocalDate data);
     /**
      * ✅ BUSCA OTIMIZADA POR PLACA (REFATORADO)
      * Mudado para Native Query para garantir uso do índice GIN (pg_trgm) e evitar erro de mapeamento.
