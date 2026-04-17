@@ -22,4 +22,5 @@ public class RadarsDTO {
     private String rodovia;
     private String km;
     private Sentido sentido;
+    private String concessionaria;
 }

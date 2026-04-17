@@ -85,7 +85,8 @@ public class FtpService {
                 return;
             }
 
-            LocalDate dataLimite = LocalDate.now().minusMonths(1);
+            //LocalDate dataLimite = LocalDate.now().minusMonths(1);
+            LocalDate dataLimite = LocalDate.now().minusDays(15);
             String dataHojeStr = LocalDate.now().format(DateTimeFormatter.ofPattern("dd-MM-yyyy"));
 
             // FILTRAGEM INTELIGENTE DE ARQUIVOS

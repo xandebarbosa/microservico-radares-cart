@@ -13,15 +13,17 @@ import org.springframework.amqp.AmqpException;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.annotation.CacheEvict;
-import org.springframework.cache.annotation.CachePut;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
-import org.springframework.data.jpa.domain.Specification;
+import org.springframework.jdbc.core.BatchPreparedStatementSetter;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -47,18 +49,26 @@ public class RadarsService {
     private final RadarsRepository radarsRepository;
     private final RabbitTemplate rabbitTemplate;
     private final LocalizacaoRadarRepository localizacaoRadarRepository;
+
+    // ✅ Injetamos o JdbcTemplate para Bulk Inserts de ultra-performance
+    private final JdbcTemplate jdbcTemplate;
+
     // Thread Pool para tarefas assíncronas (RabbitMQ e Cache)
     private final ExecutorService executorService = Executors.newVirtualThreadPerTaskExecutor();
-    // ✅ Cache thread-safe para metadados frequentes (ex: nomes de praças)
+    // Cache thread-safe para metadados frequentes (ex: nomes de praças)
     private final ConcurrentHashMap<String, String> normalizeCache = new ConcurrentHashMap<>();
 
-    // ✅ LIMITE DE DADOS HISTÓRICOS (últimos 90 dias)
+    // LIMITE DE DADOS HISTÓRICOS (últimos 90 dias)
     private static final int DIAS_HISTORICO = 90;
 
-    public  RadarsService(RadarsRepository radarsRepository, RabbitTemplate rabbitTemplate, LocalizacaoRadarRepository localizacaoRadarRepository) {
+    public RadarsService(RadarsRepository radarsRepository,
+                         RabbitTemplate rabbitTemplate,
+                         LocalizacaoRadarRepository localizacaoRadarRepository,
+                         JdbcTemplate jdbcTemplate) {
         this.radarsRepository = radarsRepository;
         this.rabbitTemplate = rabbitTemplate;
         this.localizacaoRadarRepository = localizacaoRadarRepository;
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     /**
@@ -74,7 +84,6 @@ public class RadarsService {
      * Busca por PLACA: Retorna histórico completo
      */
     @Transactional(readOnly = true)
-    //@Cacheable(value = "busca-placa", key = "#placa + '-' + #pageable.pageNumber")
     public Page<RadarsDTO> buscarPorPlaca(String placa, Pageable pageable) {
         return radarsRepository.findAllByPlaca(normalize(placa), pageable)
                 .map(this::converterParaDTO);
@@ -84,8 +93,6 @@ public class RadarsService {
      * Busca por LOCAL: Filtros pré-definidos
      */
     @Transactional(readOnly = true)
-    // Cache mais curto aqui pois dados do dia mudam ou parâmetros variam muito
-    //@Cacheable(value = "busca-local", key = "{#data, #rodovia, #km, #pageable.pageNumber}", unless = "#result.isEmpty()")
     public RadarPageDTO buscarPorLocal(
             LocalDate data,
             LocalTime horaInicial,
@@ -98,21 +105,18 @@ public class RadarsService {
         log.debug("🔎 Executando query no Banco: Data={}, Rodovia={}, Sentido={}", data, rodovia, sentido);
 
         Page<Radars> page = radarsRepository.findByLocalFilter(
-                data, // placa (não usamos na busca por local)
+                data,
                 horaInicial,
                 horaFinal,
                 null,
                 normalize(rodovia),
                 normalize(km),
-                sentido, // Passa o sentido tratado
+                sentido,
                 pageable
-
         );
 
         return convertToPageDTO(page);
     }
-
-
 
     /**
      * ✅ BUSCA GEOESPACIAL OTIMIZADA
@@ -137,8 +141,6 @@ public class RadarsService {
         return resultado.map(this::converterParaDTO);
     }
 
-
-
     /**
      * ✅ LOCALIZAÇÕES PARA MAPA - Cache de 24 horas
      */
@@ -152,19 +154,50 @@ public class RadarsService {
     }
 
     /**
-     * ✅ SALVAR RADARES COM PUBLICAÇÃO ASYNC
+     * ✅ INSERÇÃO EM LOTE NATIVA (BULK INSERT) DE ALTA PERFORMANCE
+     * Ignora o gargalo do strategy=IDENTITY do Hibernate
      */
     @Transactional
     public void saveRadars(List<Radars> radarsList) {
         if (radarsList == null || radarsList.isEmpty()) return;
 
-        // Salva em batch para performance
-        List<Radars> saved = radarsRepository.saveAll(radarsList);
-        log.info("💾 Salvos {} registros", saved.size());
+        // O comando ON CONFLICT protege o banco caso o arquivo FTP venha com linhas duplicadas (evita Crash)
+        String sql = """
+            INSERT INTO radars_cart (data, hora, placa, praca, rodovia, km, sentido, localizacao_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (data, hora, placa, praca) DO NOTHING
+        """;
+
+        jdbcTemplate.batchUpdate(sql, new BatchPreparedStatementSetter() {
+            @Override
+            public void setValues(PreparedStatement ps, int i) throws SQLException {
+                Radars radar = radarsList.get(i);
+                ps.setDate(1, java.sql.Date.valueOf(radar.getData()));
+                ps.setTime(2, java.sql.Time.valueOf(radar.getHora()));
+                ps.setString(3, radar.getPlaca());
+                ps.setString(4, radar.getPraca());
+                ps.setString(5, radar.getRodovia());
+                ps.setString(6, radar.getKm());
+                ps.setString(7, radar.getSentido());
+
+                if (radar.getLocalizacao() != null && radar.getLocalizacao().getId() != null) {
+                    ps.setLong(8, radar.getLocalizacao().getId());
+                } else {
+                    ps.setNull(8, java.sql.Types.BIGINT);
+                }
+            }
+
+            @Override
+            public int getBatchSize() {
+                return radarsList.size();
+            }
+        });
+
+        log.info("💾 Salvos {} registros em Lote de Alta Performance", radarsList.size());
 
         // Publica no RabbitMQ de forma assíncrona
         CompletableFuture.runAsync(() ->
-                        saved.forEach(this::enviarMensagemParaRabbitMQ),
+                        radarsList.forEach(this::enviarMensagemParaRabbitMQ),
                 executorService
         );
 
@@ -181,8 +214,6 @@ public class RadarsService {
     public void limparCacheDiario() {
         log.info("🧹 Limpeza diária de cache executada");
     }
-
-
 
     // ==================== MÉTODOS AUXILIARES ====================
 
@@ -277,6 +308,7 @@ public class RadarsService {
                 .rodovia(radars.getRodovia())
                 .km(radars.getKm())
                 .sentido(Sentido.fromString(radars.getSentido()))
+                .concessionaria("Cart")
                 .build();
     }
 }

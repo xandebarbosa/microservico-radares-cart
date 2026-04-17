@@ -23,13 +23,12 @@ public interface RadarsRepository extends JpaRepository<Radars, Long>, JpaSpecif
     @Query("SELECT concat(r.placa, r.hora, r.praca) FROM Radars r WHERE r.data = :data")
     Set<String> findHashesByData(@Param("data") LocalDate data);
     /**
-     * ✅ BUSCA OTIMIZADA POR PLACA (REFATORADO)
-     * Mudado para Native Query para garantir uso do índice GIN (pg_trgm) e evitar erro de mapeamento.
+     * ✅ BUSCA OTIMIZADA POR PLACA
      */
     @Query(value = """
         SELECT DISTINCT ON (r.data, r.hora, r.placa) r.* FROM radars_cart r
         WHERE r.placa ILIKE CONCAT('%', :placa, '%')
-        ORDER BY r.data DESC, r.hora DESC
+        ORDER BY r.data DESC, r.hora DESC, r.placa
         """,
             countQuery = """
         SELECT COUNT(DISTINCT (r.data, r.hora, r.placa))
@@ -39,23 +38,22 @@ public interface RadarsRepository extends JpaRepository<Radars, Long>, JpaSpecif
     @QueryHints(@QueryHint(name = "org.hibernate.readOnly", value = "true"))
     Page<Radars> findAllByPlaca(@Param("placa") String placa, Pageable pageable);
 
-    // 2. BUSCA POR LOCAL (Filtros Específicos: Data, Hora, Rodovia, Km, Sentido)
-    // Otimização: Query Nativa para evitar overhead do Hibernate em projeções complexas
     /**
-     * ✅ BUSCA COM FILTROS COMBINADOS
+     * ✅ BUSCA COM FILTROS COMBINADOS - ALTA PERFORMANCE
+     * Correção: r.sentido = CAST(:sentido AS TEXT) para usar o índice B-Tree corretamente.
      */
     @Query(value = """
-    SELECT DISTINCT ON (r.data, r.hora, r.placa) r.* FROM radars_cart r
-    WHERE 1=1
-    AND (CAST(:placa AS TEXT) IS NULL OR r.placa ILIKE CONCAT('%', CAST(:placa AS TEXT), '%'))
-    AND (CAST(:rodovia AS TEXT) IS NULL OR r.rodovia ILIKE CONCAT('%', CAST(:rodovia AS TEXT), '%'))
-    AND (CAST(:km AS TEXT) IS NULL OR r.km = CAST(:km AS TEXT))
-    AND (CAST(:sentido AS TEXT) IS NULL OR r.sentido ILIKE CAST(:sentido AS TEXT)) -- Alterado para ILIKE
-    AND (CAST(:data AS DATE) IS NULL OR r.data = CAST(:data AS DATE))
-    AND (CAST(:horaInicial AS TIME) IS NULL OR r.hora >= CAST(:horaInicial AS TIME))
-    AND (CAST(:horaFinal AS TIME) IS NULL OR r.hora <= CAST(:horaFinal AS TIME))
-    ORDER BY r.data DESC, r.hora DESC, r.placa
-    """,
+        SELECT DISTINCT ON (r.data, r.hora, r.placa) r.* FROM radars_cart r
+        WHERE 1=1
+        AND (CAST(:placa AS TEXT) IS NULL OR r.placa ILIKE CONCAT('%', CAST(:placa AS TEXT), '%'))
+        AND (CAST(:rodovia AS TEXT) IS NULL OR r.rodovia ILIKE CONCAT('%', CAST(:rodovia AS TEXT), '%'))
+        AND (CAST(:km AS TEXT) IS NULL OR r.km = CAST(:km AS TEXT))
+        AND (CAST(:sentido AS TEXT) IS NULL OR r.sentido = CAST(:sentido AS TEXT))
+        AND (CAST(:data AS DATE) IS NULL OR r.data = CAST(:data AS DATE))
+        AND (CAST(:horaInicial AS TIME) IS NULL OR r.hora >= CAST(:horaInicial AS TIME))
+        AND (CAST(:horaFinal AS TIME) IS NULL OR r.hora <= CAST(:horaFinal AS TIME))
+        ORDER BY r.data DESC, r.hora DESC, r.placa
+        """,
             nativeQuery = true
     )
     @QueryHints(@QueryHint(name = "org.hibernate.readOnly", value = "true"))
