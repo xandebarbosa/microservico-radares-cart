@@ -1,9 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration>
-    <include resource="org/springframework/boot/logging/logback/base.xml"/>
+    <!-- Substituímos o base.xml pelos defaults e console-appender para evitar gravação no disco -->
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+    <include resource="org/springframework/boot/logging/logback/console-appender.xml" />
+
     <springProperty scope="context" name="springAppName" source="spring.application.name"/>
 
     <appender name="LOGSTASH" class="net.logstash.logback.appender.LogstashTcpSocketAppender">
+        <!-- Roteamento inteligente baseado no profile do Spring -->
         <springProfile name="prod">
             <destination>fluentd:5000</destination>
         </springProfile>
@@ -24,11 +28,13 @@
         <appender-ref ref="CONSOLE" />
     </root>
 
+    <!-- Filtros de ruído para bibliotecas verbosas -->
     <logger name="org.springframework" level="WARN" />
     <logger name="org.apache.catalina" level="WARN" />
     <logger name="org.hibernate" level="WARN" />
     <logger name="org.hibernate.engine.jdbc.spi.SqlExceptionHelper" level="WARN" />
 
+    <!-- Foco principal nos logs da sua aplicação -->
     <logger name="com.coruja" level="INFO" />
 
 </configuration>

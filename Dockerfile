@@ -1,27 +1,48 @@
-# Etapa 1: Build da aplicação com Maven
+# ==============================================================================
+# Estágio 1: Build da aplicação e extração das camadas (Layered Jar)
+# ==============================================================================
 FROM maven:3.9.6-eclipse-temurin-21 AS build
 WORKDIR /app
 
-# 1. Copia só o pom.xml
+# 1. Copia o pom.xml e baixa as dependências (cache)
 COPY pom.xml .
-# 2. Baixa as dependências (camada de cache)
 RUN mvn dependency:go-offline
 
-# 3. Copia o código fonte
+# 2. Copia o código fonte e compila a aplicação
 COPY src ./src
-# 4. Compila e empacota
 RUN mvn clean package -DskipTests
 
-# Etapa 2: Imagem final com JRE (menor e mais segura)
+# 3. Extrai o JAR em camadas (Acelera builds futuros)
+# O Spring Boot layertools divide o app em: dependências, dependências snapshot e código.
+WORKDIR /app/target/extracted
+RUN java -Djarmode=layertools -jar /app/target/*.jar extract
+
+
+# ==============================================================================
+# Estágio 2: Imagem final (Runner) otimizada e segura
+# ==============================================================================
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
 VOLUME /tmp
 
-# Copia o .jar gerado no estágio anterior para a imagem final
-COPY --from=build /app/target/*.jar app.jar
+# Criação de um grupo e usuário sem privilégios (non-root) para segurança
+RUN addgroup -S spring && adduser -S spring -G spring
+USER spring:spring
 
-# Expõe a porta (deve ser a mesma do application-prod.properties)
+# Copia as camadas individualmente do estágio de build
+# A ordem é importante para maximizar o cache do Docker!
+COPY --from=build /app/target/extracted/dependencies/ ./
+COPY --from=build /app/target/extracted/spring-boot-loader/ ./
+COPY --from=build /app/target/extracted/snapshot-dependencies/ ./
+COPY --from=build /app/target/extracted/application/ ./
+
+# Expõe a porta
 EXPOSE 8085
 
-# Comando para iniciar a aplicação
-ENTRYPOINT ["java", "-jar", "app.jar"]
+# Comando para iniciar a aplicação usando o Launcher em camadas do Spring Boot
+# Note que usamos org.springframework.boot.loader.launch.JarLauncher ao invés de '-jar'
+ENTRYPOINT ["java", \
+            "-XX:InitialRAMPercentage=50.0", \
+            "-XX:MaxRAMPercentage=80.0", \
+            "-XX:+UseZGC", \
+            "org.springframework.boot.loader.launch.JarLauncher"]

@@ -15,7 +15,9 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.jdbc.core.BatchPreparedStatementSetter;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -151,6 +153,21 @@ public class RadarsService {
     @Transactional(readOnly = true)
     public List<LocalizacaoRadarProjection> listarTodasLocalizacoes() {
         return localizacaoRadarRepository.findAllLocations();
+    }
+
+    /**
+     * ✅ Lista as ultimas passagens registradas
+     */
+    public List<RadarsDTO> buscarUltimos(int limite) {
+        //Ordena para pegar as passagens mais recentes
+        Pageable pageable = PageRequest.of(0, limite,
+                Sort.by(Sort.Direction.DESC, "data", "hora"));
+
+        Page<Radars> pagina = radarsRepository.findAll(pageable);
+
+        return pagina.getContent().stream()
+                .map(this::converterParaDTO)
+                .collect(Collectors.toList());
     }
 
     /**

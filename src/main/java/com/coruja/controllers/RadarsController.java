@@ -104,6 +104,12 @@ public class RadarsController {
         return ResponseEntity.ok(resultado);
     }
 
+    @GetMapping("/ultimos")
+    public ResponseEntity<List<RadarsDTO>> buscarUltimos(@RequestParam(defaultValue = "10") int limite) {
+        List<RadarsDTO> ultimosRadares = radarsService.buscarUltimos(limite);
+        return ResponseEntity.ok(ultimosRadares);
+    }
+
     // ==================================================================================
     // 2. GESTÃO DE DOMÍNIOS (RODOVIAS E KMs)
     // ==================================================================================

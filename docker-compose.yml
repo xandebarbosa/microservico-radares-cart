@@ -11,6 +11,7 @@ services:
     # Em vez de 'image', usamos 'build' para construir a partir do nosso Dockerfile
     build:
       context: ../microservico-radares-cart # Caminho relativo para a pasta do projeto
+    user: "1000:1000"
     ports:
       - "8085:8085" # Expõe a porta do serviço para a sua máquina
     environment:
@@ -25,9 +26,22 @@ services:
       - FTP_PORT=${CART_FTP_PORT}
       - FTP_USER=${CART_FTP_USER}
       - FTP_PASS=${CART_FTP_PASS}
+      - LOCAL_DIRECTORY=/app/downloads
+      - LANG=C.UTF-8
+      - LC_ALL=C.UTF-8
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://eureka-server:8761/eureka/
     networks:
       - radares-net
+    volumes:
+      - /mnt/data/docker-volumes/radares_project/downloads/cart:/app/downloads
     restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8085/actuator/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
 volumes:
   postgres-cart-data:
   pgadmin-data: # <-- Adicionar o novo volume aqui
